@@ -190,7 +190,7 @@ Write-Host "SHA-256: $($sha256Hash.Hash)"
 Write-Host "Manifest timestamp: $releaseTimestamp"
 
 $manifestPath = Join-Path $repositoryRoot 'manifest.json'
-$manifestEntries = @(ConvertFrom-ManifestJson -Json (Get-Content -Raw -LiteralPath $manifestPath))
+[object[]]$manifestEntries = ConvertFrom-ManifestJson -Json (Get-Content -Raw -LiteralPath $manifestPath)
 $manifestMatches = @(
     foreach ($pluginEntry in $manifestEntries) {
         foreach ($versionEntry in @($pluginEntry.versions)) {
@@ -237,7 +237,7 @@ elseif ($UpdateManifest) {
         $manifestJson + [System.Environment]::NewLine,
         $utf8WithoutBom)
 
-    $savedManifest = @(ConvertFrom-ManifestJson -Json (Get-Content -Raw -LiteralPath $manifestPath))
+    [object[]]$savedManifest = ConvertFrom-ManifestJson -Json (Get-Content -Raw -LiteralPath $manifestPath)
     $savedVersion = @(
         foreach ($pluginEntry in $savedManifest) {
             foreach ($versionEntry in @($pluginEntry.versions)) {

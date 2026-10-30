@@ -51,4 +51,5 @@ All notable changes to JellyTPM will be documented in this file.
 - Coalesced concurrent forced inventory refreshes onto the newly built snapshot.
 - Updated security documentation for generation, replacement, and media-storage risks.
 - Reorganized the README around current coverage, preview, queue, and regeneration behavior.
+- Normalized manifest arrays so post-update verification works across PowerShell versions.
 
