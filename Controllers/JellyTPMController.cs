@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.JellyTPM.Controllers;
 
 /// <summary>
-/// Administrative, read-only API used by the JellyTPM dashboard.
+/// Administrative API used by the JellyTPM dashboard.
 /// </summary>
 [ApiController]
 [Authorize(Policy = "RequiresElevation")]
@@ -16,13 +16,17 @@ namespace Jellyfin.Plugin.JellyTPM.Controllers;
 public sealed class JellyTPMController : ControllerBase
 {
     private readonly TrickplayInventoryService _inventoryService;
+    private readonly TrickplayQueueService _queueService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JellyTPMController"/> class.
     /// </summary>
-    public JellyTPMController(TrickplayInventoryService inventoryService)
+    public JellyTPMController(
+        TrickplayInventoryService inventoryService,
+        TrickplayQueueService queueService)
     {
         _inventoryService = inventoryService;
+        _queueService = queueService;
     }
 
     /// <summary>Gets server-wide and per-library trickplay coverage.</summary>
@@ -70,6 +74,69 @@ public sealed class JellyTPMController : ControllerBase
                 refresh,
                 cancellationToken)
             .ConfigureAwait(false));
+    }
+
+    /// <summary>Queues non-destructive missing trickplay generation for one video.</summary>
+    [HttpPost("Items/{itemId:guid}/Generate")]
+    [ProducesResponseType<TrickplayEnqueueResult>(StatusCodes.Status200OK)]
+    [ProducesResponseType<TrickplayEnqueueResult>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TrickplayEnqueueResult>> GenerateMissing(
+        Guid itemId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _queueService.EnqueueMissingAsync(itemId, cancellationToken).ConfigureAwait(false);
+            return result.Created ? Accepted(result) : Ok(result);
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    /// <summary>Gets the durable generation queue and retained history.</summary>
+    [HttpGet("Jobs")]
+    [ProducesResponseType<TrickplayJobPage>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<TrickplayJobPage>> GetJobs(
+        [FromQuery] int startIndex = 0,
+        [FromQuery] int limit = 25,
+        CancellationToken cancellationToken = default)
+    {
+        if (startIndex < 0)
+        {
+            return BadRequest("Start index cannot be negative.");
+        }
+
+        return Ok(await _queueService.GetJobsAsync(startIndex, limit, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Cancels a queued generation job.</summary>
+    [HttpDelete("Jobs/{jobId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CancelJob(Guid jobId, CancellationToken cancellationToken)
+    {
+        var job = await _queueService.GetJobAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (job is null)
+        {
+            return NotFound();
+        }
+
+        if (!await _queueService.CancelQueuedAsync(jobId, cancellationToken).ConfigureAwait(false))
+        {
+            return Conflict("Only queued jobs can be cancelled.");
+        }
+
+        return NoContent();
     }
 }
 

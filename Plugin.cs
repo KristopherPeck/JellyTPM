@@ -39,6 +39,21 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <inheritdoc />
     public override Guid Id => PluginId;
 
+    /// <summary>Resolves a simple file name inside the JellyTPM data directory.</summary>
+    public string GetDataFilePath(string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        if (Path.IsPathRooted(fileName)
+            || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal)
+            || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || fileName is "." or "..")
+        {
+            throw new ArgumentException("Plugin data files must use a simple file name.", nameof(fileName));
+        }
+
+        return Path.Combine(DataFolderPath, fileName);
+    }
+
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()
     {

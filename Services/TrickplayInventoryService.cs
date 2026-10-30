@@ -102,6 +102,22 @@ public sealed class TrickplayInventoryService
         };
     }
 
+    /// <summary>Gets one current inventory row by Jellyfin item identifier.</summary>
+    public async Task<TrickplayItemSummary?> GetItemAsync(
+        Guid itemId,
+        bool refresh,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
+        return snapshot.Items.FirstOrDefault(item => item.Id == itemId);
+    }
+
+    /// <summary>Invalidates the cached inventory after trickplay data changes.</summary>
+    public void Invalidate()
+    {
+        _snapshot = null;
+    }
+
     private async Task<InventorySnapshot> GetSnapshotAsync(
         bool refresh,
         CancellationToken cancellationToken)

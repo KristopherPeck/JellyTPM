@@ -2,11 +2,11 @@
 
 > Jellyfin Trickplay Manager
 
-JellyTPM gives Jellyfin administrators a per-library and per-item view of native trickplay coverage, with a planned durable queue for generating missing thumbnails, retrying failures, and explicitly regenerating existing data.
+JellyTPM gives Jellyfin administrators a per-library and per-item view of native trickplay coverage, with a durable queue for generating missing thumbnails and tracking verified results.
 
 ## Current status
 
-JellyTPM is early development software targeting Jellyfin Server 12.4. The current milestone is intentionally read-only.
+JellyTPM is early development software targeting Jellyfin Server 12.4. Phase 2 adds controlled, non-destructive per-item generation to the inventory dashboard.
 
 Implemented:
 
@@ -18,14 +18,16 @@ Implemented:
 - Short-lived server-side inventory snapshots
 - Administrator-only API routes
 - Embedded Jellyfin dashboard without Node.js or a frontend build toolchain
+- Durable single-worker generation queue that recovers interrupted work after restart
+- Non-destructive Generate missing actions for Missing and Partial items
+- Post-generation resolution validation, retained job history, and queued-job cancellation
 
 Planned:
 
-- Durable single-worker generation queue
-- Generate missing by item or library
+- Generate missing by library
 - Explicit replacement regeneration
-- Retry and cancellation controls
-- Post-generation validation and job history
+- Retry failed jobs and request cancellation of active work
+- Native scheduled-task activity detection
 
 ## Status definitions
 
@@ -38,6 +40,8 @@ Planned:
 | Not eligible | Jellyfin cannot process the video, or it is excluded by JellyTPM settings. |
 
 JellyTPM does not report a numeric percentage for the active FFmpeg operation because Jellyfin does not expose reliable per-file trickplay progress through its plugin API.
+
+Generate missing uses Jellyfin's non-replacement operation. A job is marked Completed only after JellyTPM confirms that every expected resolution exists. Queue and history records are stored in the plugin data directory and completed records are retained for 30 days by default.
 
 Synthetic Collections/BoxSets views are excluded because they reference videos from physical source libraries and would otherwise duplicate inventory rows. Music, book, and zero-video libraries are omitted because they are outside the scope of native video trickplay. Disabled video libraries show coverage as `N/A` rather than implying that generation failed.
 

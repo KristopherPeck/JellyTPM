@@ -36,6 +36,9 @@
         .jt-page-info { min-width: 12em; text-align: center; }
         .jt-widths { white-space: nowrap; }
         .jt-context { min-width: 12em; white-space: pre-line; }
+        .jt-actions { white-space: nowrap; }
+        .jt-actions button { margin: 0; min-width: auto; }
+        .jt-error-detail { max-width: 24em; white-space: normal; }
         @media (max-width: 700px) {
             .jt-hide-small { display: none; }
         }
@@ -44,7 +47,7 @@
     <div data-role="content">
         <div class="content-primary jt-page">
             <h1>JellyTPM</h1>
-            <p class="jt-muted">Native Jellyfin trickplay coverage by library and item. This first milestone is read-only.</p>
+            <p class="jt-muted">Audit native Jellyfin trickplay coverage and safely queue missing generation.</p>
 
             <div id="globalMessage" class="jt-message" role="status" aria-live="polite"></div>
 
@@ -119,6 +122,7 @@
                             <th class="jt-hide-small">Expected</th>
                             <th>Available</th>
                             <th class="jt-hide-small">Thumbnails</th>
+                            <th>Actions</th>
                         </tr>
                         </thead>
                         <tbody id="itemRows"></tbody>
@@ -129,6 +133,35 @@
                     <span id="itemPageInfo" class="jt-page-info jt-muted"></span>
                     <button is="emby-button" type="button" class="raised" id="nextItems">Next</button>
                 </div>
+            </section>
+
+            <section aria-labelledby="jobsHeading">
+                <h2 id="jobsHeading">Generation queue</h2>
+                <p class="jt-muted">JellyTPM runs one item at a time. Numeric progress for the active item is not available from Jellyfin.</p>
+                <div class="jt-summary">
+                    <div class="jt-card"><span>Queued</span><strong id="queuedJobs">0</strong></div>
+                    <div class="jt-card"><span>Generating</span><strong id="generatingJobs">0</strong></div>
+                    <div class="jt-card"><span>Completed</span><strong id="completedJobs">0</strong></div>
+                    <div class="jt-card"><span>Failed</span><strong id="failedJobs">0</strong></div>
+                </div>
+                <button is="emby-button" type="button" class="raised" id="refreshJobs">Refresh jobs</button>
+                <div class="jt-table-wrap">
+                    <table class="jt-table">
+                        <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Library</th>
+                            <th>Status</th>
+                            <th>Queued</th>
+                            <th>Finished</th>
+                            <th>Result</th>
+                            <th>Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody id="jobRows"></tbody>
+                    </table>
+                </div>
+                <p id="jobPageInfo" class="jt-muted"></p>
             </section>
         </div>
     </div>
@@ -142,19 +175,25 @@
             var pageSize = 50;
             var totalItems = 0;
             var initialized = false;
+            var jobPollTimer = null;
+            var activeJobItemIds = {};
+            var currentItemResult = null;
 
             function byId(id) { return page.querySelector('#' + id); }
 
-            function api(path) {
+            function apiRequest(path, method) {
                 return ApiClient.ajax({
                     url: ApiClient.getUrl('JellyTPM/' + path),
-                    type: 'GET',
+                    type: method || 'GET',
                     dataType: 'json'
                 }).then(function (value) {
+                    if (value == null || value === '') { return null; }
                     var parsed = typeof value === 'string' ? JSON.parse(value) : value;
                     return normalizeResponse(parsed);
                 });
             }
+
+            function api(path) { return apiRequest(path, 'GET'); }
 
             function normalizeResponse(value) {
                 if (Array.isArray(value)) {
@@ -264,6 +303,7 @@
             }
 
             function renderItems(result) {
+                currentItemResult = result;
                 totalItems = result.totalCount;
                 var body = byId('itemRows');
                 body.textContent = '';
@@ -288,6 +328,23 @@
                     appendCell(row, item.expectedWidths.length ? item.expectedWidths.join(', ') + ' px' : '-', 'jt-widths jt-hide-small');
                     appendCell(row, item.resolutions.length ? item.resolutions.map(function (value) { return value.width; }).join(', ') + ' px' : '-', 'jt-widths');
                     appendCell(row, item.resolutions.reduce(function (sum, value) { return sum + value.thumbnailCount; }, 0), 'jt-hide-small');
+                    var actionCell = appendCell(row, '', 'jt-actions');
+                    var canGenerate = item.eligible
+                        && item.libraryEnabled
+                        && (item.status === 'Missing' || item.status === 'Partial');
+                    if (canGenerate) {
+                        var generateButton = document.createElement('button');
+                        generateButton.setAttribute('is', 'emby-button');
+                        generateButton.type = 'button';
+                        generateButton.className = 'raised btnGenerateMissing';
+                        generateButton.dataset.itemId = item.id;
+                        generateButton.dataset.itemName = item.name;
+                        generateButton.textContent = activeJobItemIds[String(item.id).toLowerCase()] ? 'Queued' : 'Generate missing';
+                        generateButton.disabled = Boolean(activeJobItemIds[String(item.id).toLowerCase()]);
+                        actionCell.appendChild(generateButton);
+                    } else {
+                        actionCell.textContent = '-';
+                    }
                     body.appendChild(row);
                 });
 
@@ -337,11 +394,115 @@
                 });
             }
 
+            function renderJobs(result) {
+                var previousActiveItemIds = activeJobItemIds;
+                activeJobItemIds = {};
+                result.activeItemIds.forEach(function (itemId) {
+                    activeJobItemIds[String(itemId).toLowerCase()] = true;
+                });
+                byId('queuedJobs').textContent = result.counts.queued;
+                byId('generatingJobs').textContent = result.counts.generating;
+                byId('completedJobs').textContent = result.counts.completed;
+                byId('failedJobs').textContent = result.counts.failed;
+
+                var body = byId('jobRows');
+                body.textContent = '';
+                result.items.forEach(function (job) {
+                    var row = document.createElement('tr');
+                    appendCell(row, job.itemName);
+                    appendCell(row, job.libraryName);
+                    var statusCell = appendCell(row, '');
+                    var badge = document.createElement('span');
+                    badge.className = 'jt-status jt-status-' + String(job.status).toLowerCase();
+                    badge.textContent = statusLabel(job.status);
+                    statusCell.appendChild(badge);
+                    appendCell(row, new Date(job.queuedAtUtc).toLocaleString());
+                    appendCell(row, job.finishedAtUtc ? new Date(job.finishedAtUtc).toLocaleString() : '-');
+                    appendCell(row, job.errorMessage || (job.status === 'Completed' ? 'Verified' : '-'), 'jt-error-detail');
+                    var actionCell = appendCell(row, '', 'jt-actions');
+                    if (job.status === 'Queued') {
+                        var cancelButton = document.createElement('button');
+                        cancelButton.setAttribute('is', 'emby-button');
+                        cancelButton.type = 'button';
+                        cancelButton.className = 'raised btnCancelJob';
+                        cancelButton.dataset.jobId = job.id;
+                        cancelButton.textContent = 'Cancel';
+                        actionCell.appendChild(cancelButton);
+                    } else {
+                        actionCell.textContent = '-';
+                    }
+                    body.appendChild(row);
+                });
+                byId('jobPageInfo').textContent = result.totalCount
+                    ? 'Showing ' + result.items.length + ' of ' + result.totalCount + ' retained jobs.'
+                    : 'No generation jobs yet.';
+
+                var activeJobFinished = Object.keys(previousActiveItemIds).some(function (itemId) {
+                    return !activeJobItemIds[itemId];
+                });
+                if (activeJobFinished) {
+                    loadAll(false);
+                } else if (currentItemResult) {
+                    renderItems(currentItemResult);
+                }
+            }
+
+            function loadJobs(showErrors) {
+                return api('Jobs?startIndex=0&limit=25').then(function (result) {
+                    renderJobs(result);
+                }).catch(function (error) {
+                    if (showErrors) { reportError('Unable to load the generation queue', error); }
+                    else { console.error('JellyTPM job refresh failed', error); }
+                });
+            }
+
+            function generateMissing(button) {
+                var itemId = button.dataset.itemId;
+                var itemName = button.dataset.itemName;
+                button.disabled = true;
+                button.textContent = 'Queuing...';
+                setMessage('Queuing missing trickplay generation for ' + itemName + '...', false);
+                apiRequest('Items/' + encodeURIComponent(itemId) + '/Generate', 'POST').then(function (result) {
+                    setMessage(result.created
+                        ? 'Generation queued for ' + itemName + '.'
+                        : itemName + ' is already queued or generating.', false);
+                    return loadJobs(true);
+                }).then(function () {
+                    return loadItems(false);
+                }).catch(function (error) {
+                    button.disabled = false;
+                    button.textContent = 'Generate missing';
+                    reportError('Unable to queue generation for ' + itemName, error);
+                });
+            }
+
+            function cancelJob(button) {
+                button.disabled = true;
+                apiRequest('Jobs/' + encodeURIComponent(button.dataset.jobId), 'DELETE').then(function () {
+                    setMessage('Queued job cancelled.', false);
+                    return loadJobs(true);
+                }).then(function () {
+                    return loadItems(false);
+                }).catch(function (error) {
+                    button.disabled = false;
+                    reportError('Unable to cancel the queued job', error);
+                });
+            }
+
             function initialize() {
                 if (initialized) { return; }
                 initialized = true;
                 byId('applyFilters').addEventListener('click', function () { startIndex = 0; loadItems(false); });
                 byId('refreshInventory').addEventListener('click', function () { startIndex = 0; loadAll(true); });
+                byId('refreshJobs').addEventListener('click', function () { loadJobs(true); });
+                byId('itemRows').addEventListener('click', function (event) {
+                    var button = event.target.closest('.btnGenerateMissing');
+                    if (button) { generateMissing(button); }
+                });
+                byId('jobRows').addEventListener('click', function (event) {
+                    var button = event.target.closest('.btnCancelJob');
+                    if (button) { cancelJob(button); }
+                });
                 byId('itemSearch').addEventListener('keydown', function (event) {
                     if (event.key === 'Enter') { event.preventDefault(); startIndex = 0; loadItems(false); }
                 });
@@ -357,6 +518,16 @@
             page.addEventListener('viewshow', function () {
                 initialize();
                 loadAll(false);
+                loadJobs(true);
+                if (jobPollTimer) { clearInterval(jobPollTimer); }
+                jobPollTimer = setInterval(function () { loadJobs(false); }, 5000);
+            });
+
+            page.addEventListener('viewhide', function () {
+                if (jobPollTimer) {
+                    clearInterval(jobPollTimer);
+                    jobPollTimer = null;
+                }
             });
         }());
     </script>

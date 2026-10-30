@@ -13,6 +13,10 @@ All notable changes to JellyTPM will be documented in this file.
 - Embedded administrator dashboard.
 - Canonical eligibility and coverage status model.
 - Guarded PowerShell release packaging with manifest checksum updates.
+- Durable, single-worker trickplay generation queue with restart recovery.
+- Per-item non-destructive Generate missing actions for Missing and Partial videos.
+- Post-generation resolution validation, retained job history, and queued-job cancellation.
+- Generation queue status cards, automatic polling, and recent job results in the dashboard.
 
 ### Fixed
 

@@ -3,7 +3,7 @@ using MediaBrowser.Model.Plugins;
 namespace Jellyfin.Plugin.JellyTPM.Configuration;
 
 /// <summary>
-/// Configures JellyTPM's read-only inventory behavior.
+/// Configures JellyTPM inventory and generation behavior.
 /// </summary>
 public sealed class PluginConfiguration : BasePluginConfiguration
 {
@@ -21,5 +21,10 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the default number of rows returned by the item endpoint.
     /// </summary>
     public int DefaultPageSize { get; set; } = 50;
+
+    /// <summary>
+    /// Gets or sets the number of days completed generation history is retained.
+    /// </summary>
+    public int JobHistoryRetentionDays { get; set; } = 30;
 }
 
