@@ -105,6 +105,22 @@ public sealed class TrickplayBatchEnqueueResult
 
     /// <summary>Gets or sets a value indicating whether candidates exceeded the batch limit.</summary>
     public bool Truncated { get; set; }
+
+    /// <summary>Gets or sets the number of candidates skipped because the active queue was full.</summary>
+    public int QueueCapacityLimitedItems { get; set; }
+
+    /// <summary>Gets or sets the configured maximum number of active jobs.</summary>
+    public int ActiveQueueLimit { get; set; }
+}
+
+/// <summary>Compact active-job state used to annotate inventory rows.</summary>
+public sealed class ActiveTrickplayJob
+{
+    /// <summary>Gets or sets the Jellyfin item identifier.</summary>
+    public Guid ItemId { get; set; }
+
+    /// <summary>Gets or sets the active lifecycle state.</summary>
+    public TrickplayJobStatus Status { get; set; }
 }
 
 /// <summary>Counts the current durable queue and history states.</summary>
@@ -141,8 +157,8 @@ public sealed class TrickplayJobPage
     /// <summary>Gets or sets the bounded page size.</summary>
     public int PageSize { get; set; }
 
-    /// <summary>Gets or sets every queued or generating job, regardless of paging.</summary>
-    public TrickplayJob[] ActiveJobs { get; set; } = [];
+    /// <summary>Gets or sets a bounded set of queued or generating item states.</summary>
+    public ActiveTrickplayJob[] ActiveJobs { get; set; } = [];
 
     /// <summary>Gets or sets aggregate counts before paging.</summary>
     public TrickplayJobCounts Counts { get; set; } = new();
@@ -162,6 +178,9 @@ public sealed class JellyTPMSettings
 
     /// <summary>Gets or sets the maximum number of candidates accepted by one filtered batch.</summary>
     public int MaximumBatchSize { get; set; }
+
+    /// <summary>Gets or sets the maximum number of queued and generating jobs.</summary>
+    public int MaximumActiveJobs { get; set; }
 }
 
 /// <summary>Summarizes a terminal-history clear operation.</summary>

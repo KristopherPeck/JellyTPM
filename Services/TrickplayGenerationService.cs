@@ -31,7 +31,7 @@ public sealed class TrickplayGenerationService
     public async Task ExecuteAsync(TrickplayJob job, CancellationToken cancellationToken)
     {
         var inventoryItem = await _inventoryService
-            .GetItemAsync(job.ItemId, true, cancellationToken)
+            .GetCurrentItemAsync(job.ItemId, job.LibraryId, cancellationToken)
             .ConfigureAwait(false)
             ?? throw new TrickplayGenerationException("The video is no longer present in an inventoried library.");
 

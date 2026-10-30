@@ -41,5 +41,10 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the maximum number of candidates accepted by one filtered batch request.
     /// </summary>
     public int MaximumBatchSize { get; set; } = 500;
+
+    /// <summary>
+    /// Gets or sets the maximum number of queued and generating jobs retained at once.
+    /// </summary>
+    public int MaximumActiveJobs { get; set; } = 1000;
 }
 

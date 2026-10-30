@@ -1,84 +1,78 @@
 # JellyTPM
 
-> TrickPlay Management Dashboard
+> Jellyfin TrickPlay Manager
 
 [![Jellyfin 12.4](https://img.shields.io/badge/Jellyfin-12.4-00A4DC?logo=jellyfin&logoColor=white)](https://jellyfin.org/)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![Dev](https://img.shields.io/badge/status-dev-orange)](https://github.com/KristopherPeck/JellyTPM/releases)
-[![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE.md)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/KristopherPeck/JellyTPM/releases)
+[![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
 ![JellyTPM trickplay coverage and generation dashboard](assets/title-cards/jellytpm-repository.png)
 
-JellyTPM (Jellyfin TrickPlay Manager) gives Jellyfin administrators a per-library and per-item view of native trickplay coverage, with a durable queue for generating missing thumbnails and tracking verified results.
+JellyTPM gives Jellyfin administrators a searchable view of native trickplay coverage and a controlled queue for generating, previewing, and replacing trickplay thumbnails.
 
-## Current status
+## Features
 
-JellyTPM is early development software targeting Jellyfin Server 12.4. Phase 2 adds controlled, non-destructive per-item generation to the inventory dashboard.
+- Server-wide and per-library coverage totals
+- Paged inventory with library, status, title, show, and season filtering
+- Available, Partial, Missing, Library disabled, and Not eligible states
+- Expected widths, available widths, and thumbnail counts
+- Television series, season, movie, and extra context where Jellyfin provides it
+- Authenticated frame previews with resolution and timeline controls
+- Non-destructive generation for individual Missing or Partial items
+- Filtered batch generation with configurable batch and active-queue limits
+- Explicitly confirmed replacement regeneration for one item
+- Durable single-worker queue with restart recovery and per-item deduplication
+- Post-generation validation, retained history, queued-job cancellation, and completed totals
+- Separate Coverage, Generation Queue, and Settings tabs in Jellyfin's administrator dashboard
 
-Implemented:
-
-- Server-wide native trickplay coverage totals
-- Per-library completion percentages
-- Available, partial, missing, disabled, and ineligible item states
-- Server-paged title inventory with library, status, and search filters
-- Expected and available resolution reporting
-- Interactive trickplay frame previews with resolution selection and timeline scrubbing
-- Guarded single-item trickplay regeneration through the durable queue
-- Short-lived server-side inventory snapshots
-- Administrator-only API routes
-- Embedded Jellyfin dashboard without Node.js or a frontend build toolchain
-- Durable single-worker generation queue that recovers interrupted work after restart
-- Non-destructive Generate missing actions for Missing and Partial items
-- Post-generation resolution validation, retained job history, and queued-job cancellation
-- Filtered batch generation with a configurable per-request safety limit
-- Combined show-and-season search using Jellyfin's actual season names
-- Configurable history age and count limits, with active jobs excluded from pruning
-- Clear-history controls with an optional persistent completed-job total
-- Queue-state-aware dashboard styling and show/season context in queue rows
-- Separate Coverage, Generation Queue, and Settings tabs
-
-Planned:
-
-- Retry failed jobs and request cancellation of active work
-- Native scheduled-task activity detection
-
-## Status definitions
+## How coverage is classified
 
 | Status | Meaning |
 | --- | --- |
-| Available | Every currently configured trickplay width is recorded. |
-| Partial | At least one configured width exists and at least one is missing. |
+| Available | Every currently configured effective trickplay width has thumbnails. |
+| Partial | At least one configured width is available and at least one is missing. |
 | Missing | No configured trickplay width is available. |
 | Library disabled | Trickplay extraction is disabled for the containing library. |
 | Not eligible | Jellyfin cannot process the video, or it is excluded by JellyTPM settings. |
 
-JellyTPM does not report a numeric percentage for the active FFmpeg operation because Jellyfin does not expose reliable per-file trickplay progress through its plugin API.
+An item is normally Partial only when multiple effective widths are configured. Effective widths account for the source video width.
 
-Generate missing uses Jellyfin's non-replacement operation. A job is marked Completed only after JellyTPM confirms that every expected resolution exists. Queue and history records are stored in the plugin data directory and completed records are retained for 30 days by default.
+Collections/BoxSets are excluded because they duplicate items from their source libraries. Music, book, and zero-video libraries are also omitted. Disabled video libraries remain visible with coverage shown as `N/A`.
 
-Regenerate is available from an item's Preview dialog when existing trickplay data is present. Jellyfin removes the existing files and database records before rebuilding them, so JellyTPM requires explicit confirmation and runs only one durable job for the item at a time. A failed replacement can temporarily leave the item without trickplay data; the queue history preserves the operation and failure result.
+## Generation and regeneration
 
-Terminal history is limited to 50 records by default. Queued and generating jobs never count against that limit. The completed-job total is preserved when detailed history expires or is cleared by default; administrators can instead configure it to reflect only retained records. Filtered batch generation has a separate default maximum of 500 candidates per request, so queue safety and history retention remain independent.
+Generate missing uses Jellyfin's non-replacement operation. JellyTPM runs one job at a time and marks it Completed only after every expected resolution has been verified.
 
-Synthetic Collections/BoxSets views are excluded because they reference videos from physical source libraries and would otherwise duplicate inventory rows. Music, book, and zero-video libraries are omitted because they are outside the scope of native video trickplay. Disabled video libraries show coverage as `N/A` rather than implying that generation failed.
+Regenerate is available from the Preview dialog when an item already has trickplay data. It invokes Jellyfin's replacement operation, which can remove existing trickplay files and database records before rebuilding them. JellyTPM therefore requires explicit confirmation and prevents simultaneous jobs for the same item. If replacement fails, the item can temporarily have no usable trickplay preview.
 
-Episode rows include their television series and season. Extra rows include their owning movie or episode context when Jellyfin exposes that ownership relationship.
+Jellyfin does not expose reliable numeric per-file trickplay progress to plugins, so JellyTPM reports lifecycle states: Queued, Generating, Completed, Failed, or Cancelled.
 
-Items with at least one available trickplay resolution include a Preview action. JellyTPM retrieves the authenticated Jellyfin tile containing the selected timestamp and renders only that frame; it does not read media paths or transcode the source video.
+## Queue and history settings
 
-An item can normally be Partial only when multiple effective trickplay widths are configured and some, but not all, are available.
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| History retention | 30 days | Removes terminal records older than the configured age. |
+| Maximum retained history | 50 | Limits detailed Completed, Failed, and Cancelled records. |
+| Preserve completed total | On | Keeps the Completed counter when detailed history is pruned or cleared. |
+| Maximum filtered batch size | 500 | Limits the candidates selected by one batch request. |
+| Maximum active queue | 1,000 | Caps all Queued and Generating jobs across requests. |
+
+Active jobs are never removed by history retention. Lowering the active-queue limit does not cancel existing work; it prevents new jobs until the queue falls below the limit.
 
 ## Requirements
 
 - Jellyfin Server 12.4
-- .NET 10 for development and packaging
-- A Jellyfin administrator account to access the dashboard
+- A Jellyfin administrator account
+- .NET 10 SDK only when developing or packaging the plugin
+
+JellyTPM should be installed only on the Jellyfin version targeted by its release manifest. Back up the Jellyfin data directory before testing beta releases or running broad replacement operations.
 
 ## Development
 
-JellyTPM is a conventional .NET Jellyfin server plugin. It does not require Node.js or Docker.
+JellyTPM is a conventional .NET Jellyfin server plugin. `Web/dashboard.html` is embedded directly in the plugin assembly; Node.js and Docker are not used.
 
-The project references Jellyfin's 12.4 controller and model packages and embeds `Web/dashboard.html` directly in the plugin assembly.
+The project references `Jellyfin.Controller` and `Jellyfin.Model` 12.4.0.
 
 Testing and packaging are intentionally performed on a separate designated workstation.
 
@@ -90,23 +84,31 @@ From PowerShell on the build workstation:
 .\scripts\package-release.ps1
 ```
 
-The script restores and publishes the version declared in the project, stages only the plugin runtime files and notices, creates MD5 and SHA-256 checksum files, and writes the ZIP beneath `artifacts/`.
+The script restores and publishes the project version, stages an allowlist of plugin files, rejects server assemblies and native runtime files, and writes the ZIP plus MD5 and SHA-256 checksum files beneath `artifacts/`.
 
-For a final release candidate whose ZIP has been validated, update the matching manifest checksum and UTC timestamp during packaging:
+After the exact release ZIP has been validated, update its matching manifest checksum and UTC timestamp with a fresh build:
 
 ```powershell
 .\scripts\package-release.ps1 -UpdateManifest
 ```
 
-Use `-SkipBuild` only to repackage an existing `artifacts/publish/<version>` directory. It cannot be combined with `-UpdateManifest`.
+`-SkipBuild` can repackage an existing `artifacts/publish/<version>` directory, but it cannot be combined with `-UpdateManifest`.
 
 ## Security
 
-All JellyTPM API routes require Jellyfin's elevated-privilege authorization policy. Browser responses contain item identifiers and display metadata but never full media paths.
+All JellyTPM API routes require Jellyfin's elevated Administrator policy. Administrative responses disable caching, and plugin responses do not expose full media paths.
 
-See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
+Generation can consume substantial CPU, GPU, and storage I/O. Regeneration is destructive to existing trickplay data by design, and administrators should use it only after confirming the selected item and maintaining an appropriate Jellyfin backup.
+
+See [SECURITY.md](SECURITY.md) for the security boundary and private vulnerability-reporting guidance.
+
+## Roadmap
+
+- Retry controls for failed jobs
+- Best-effort cancellation of active generation when Jellyfin exposes a safe mechanism
+- Detection of native Jellyfin scheduled-task generation activity
 
 ## License
 
-JellyTPM is licensed under GPL-3.0-only. See [LICENSE](LICENSE).
+JellyTPM is licensed under [GPL-3.0-only](LICENSE).
 

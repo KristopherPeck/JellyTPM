@@ -8,6 +8,7 @@ namespace Jellyfin.Plugin.JellyTPM.Services;
 public sealed class TrickplayJobStore
 {
     private const string StoreFileName = "generation-jobs.json";
+    private const int MaximumAllowedActiveJobs = 5000;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -43,6 +44,13 @@ public sealed class TrickplayJobStore
                 return new TrickplayEnqueueResult { Job = Copy(existing), Created = false };
             }
 
+            var activeLimit = GetActiveJobLimit();
+            if (jobs.Count(IsActive) >= activeLimit)
+            {
+                throw new InvalidOperationException(
+                    $"The JellyTPM active queue limit of {activeLimit} jobs has been reached.");
+            }
+
             var job = new TrickplayJob
             {
                 Id = Guid.NewGuid(),
@@ -69,7 +77,7 @@ public sealed class TrickplayJobStore
     }
 
     /// <summary>Creates durable jobs for a bounded set and deduplicates active items.</summary>
-    internal async Task<(int QueuedItems, int AlreadyActiveItems)> EnqueueManyAsync(
+    internal async Task<(int QueuedItems, int AlreadyActiveItems, int QueueCapacityLimitedItems, int ActiveQueueLimit)> EnqueueManyAsync(
         IReadOnlyCollection<TrickplayItemSummary> items,
         CancellationToken cancellationToken)
     {
@@ -84,13 +92,25 @@ public sealed class TrickplayJobStore
                 .ToHashSet();
             var queuedItems = 0;
             var alreadyActiveItems = 0;
+            var queueCapacityLimitedItems = 0;
+            var activeQueueLimit = GetActiveJobLimit();
+            var activeJobCount = jobs.Count(IsActive);
             foreach (var item in items.GroupBy(value => value.Id).Select(group => group.First()))
             {
-                if (!activeItemIds.Add(item.Id))
+                if (activeItemIds.Contains(item.Id))
                 {
                     alreadyActiveItems++;
                     continue;
                 }
+
+                if (activeJobCount >= activeQueueLimit)
+                {
+                    queueCapacityLimitedItems++;
+                    continue;
+                }
+
+                activeItemIds.Add(item.Id);
+                activeJobCount++;
 
                 jobs.Add(new TrickplayJob
                 {
@@ -111,7 +131,7 @@ public sealed class TrickplayJobStore
             PruneLocked(jobs);
             SynchronizeCompletedTotalIfNeeded(state);
             await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
-            return (queuedItems, alreadyActiveItems);
+            return (queuedItems, alreadyActiveItems, queueCapacityLimitedItems, activeQueueLimit);
         }
         finally
         {
@@ -155,9 +175,15 @@ public sealed class TrickplayJobStore
                 StartIndex = boundedStart,
                 PageSize = boundedLimit,
                 ActiveJobs = ordered
-                    .Where(job => job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating)
+                    .Where(IsActive)
                     .GroupBy(job => job.ItemId)
-                    .Select(group => Copy(group.First()))
+                    .Select(group => group.First())
+                    .Select(job => new ActiveTrickplayJob
+                    {
+                        ItemId = job.ItemId,
+                        Status = job.Status
+                    })
+                    .Take(MaximumAllowedActiveJobs)
                     .ToArray(),
                 Counts = new TrickplayJobCounts
                 {
@@ -450,6 +476,16 @@ public sealed class TrickplayJobStore
         return job.Status is TrickplayJobStatus.Completed
             or TrickplayJobStatus.Failed
             or TrickplayJobStatus.Cancelled;
+    }
+
+    private static bool IsActive(TrickplayJob job)
+    {
+        return job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating;
+    }
+
+    private static int GetActiveJobLimit()
+    {
+        return Math.Clamp(Plugin.Instance?.Configuration.MaximumActiveJobs ?? 1000, 1, MaximumAllowedActiveJobs);
     }
 
     private static bool SynchronizeCompletedTotalIfNeeded(JobStoreState state)

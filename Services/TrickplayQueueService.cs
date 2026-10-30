@@ -31,7 +31,7 @@ public sealed class TrickplayQueueService : BackgroundService
         Guid itemId,
         CancellationToken cancellationToken)
     {
-        var item = await _inventoryService.GetItemAsync(itemId, true, cancellationToken).ConfigureAwait(false)
+        var item = await _inventoryService.GetCurrentItemAsync(itemId, null, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("The video is not present in the JellyTPM inventory.");
         if (!item.Eligible)
         {
@@ -64,7 +64,7 @@ public sealed class TrickplayQueueService : BackgroundService
         Guid itemId,
         CancellationToken cancellationToken)
     {
-        var item = await _inventoryService.GetItemAsync(itemId, true, cancellationToken).ConfigureAwait(false)
+        var item = await _inventoryService.GetCurrentItemAsync(itemId, null, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("The video is not present in the JellyTPM inventory.");
         if (!item.Eligible)
         {
@@ -123,7 +123,9 @@ public sealed class TrickplayQueueService : BackgroundService
             QueuedItems = enqueueResult.QueuedItems,
             AlreadyActiveItems = enqueueResult.AlreadyActiveItems,
             BatchLimit = batchLimit,
-            Truncated = candidates.Length > batchLimit
+            Truncated = candidates.Length > batchLimit,
+            QueueCapacityLimitedItems = enqueueResult.QueueCapacityLimitedItems,
+            ActiveQueueLimit = enqueueResult.ActiveQueueLimit
         };
     }
 

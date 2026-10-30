@@ -213,7 +213,8 @@ public sealed class JellyTPMController : ControllerBase
             JobHistoryRetentionDays = configuration.JobHistoryRetentionDays,
             MaximumRetainedJobs = configuration.MaximumRetainedJobs,
             PreserveCompletedCount = configuration.PreserveCompletedCount,
-            MaximumBatchSize = configuration.MaximumBatchSize
+            MaximumBatchSize = configuration.MaximumBatchSize,
+            MaximumActiveJobs = configuration.MaximumActiveJobs
         });
     }
 
@@ -238,6 +239,11 @@ public sealed class JellyTPMController : ControllerBase
             return BadRequest("Maximum batch size must be between 1 and 5000.");
         }
 
+        if (settings.MaximumActiveJobs is < 1 or > 5000)
+        {
+            return BadRequest("Maximum active jobs must be between 1 and 5000.");
+        }
+
         var plugin = Plugin.Instance
             ?? throw new InvalidOperationException("JellyTPM is not initialized.");
         var configuration = plugin.Configuration;
@@ -245,6 +251,7 @@ public sealed class JellyTPMController : ControllerBase
         configuration.MaximumRetainedJobs = settings.MaximumRetainedJobs;
         configuration.PreserveCompletedCount = settings.PreserveCompletedCount;
         configuration.MaximumBatchSize = settings.MaximumBatchSize;
+        configuration.MaximumActiveJobs = settings.MaximumActiveJobs;
         plugin.UpdateConfiguration(configuration);
         return Ok(settings);
     }

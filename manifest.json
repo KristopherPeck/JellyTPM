@@ -13,8 +13,8 @@
         "changelog": "Initial beta release for Jellyfin 12.4.",
         "targetAbi": "12.4.0.0",
         "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.1.0.0/JellyTPM_0.1.0.0.zip",
-        "checksum": "",
-        "timestamp": "2026-10-29T00:00:00Z"
+        "checksum": "D613DBF7E7EFC97A50A1AEA522557FA9",
+        "timestamp": "2026-10-30T23:38:42Z"
       }
     ]
   }

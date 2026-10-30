@@ -28,6 +28,8 @@ All notable changes to JellyTPM will be documented in this file.
 - Interactive trickplay previews with resolution selection and timestamp scrubbing.
 - Guarded single-item replacement regeneration from the trickplay Preview dialog.
 - Queue operation history distinguishing missing generation from regeneration.
+- Configurable global active-queue limit enforced across single and batch requests.
+- Compact active-job status records for inventory annotations.
 
 ### Fixed
 
@@ -45,4 +47,8 @@ All notable changes to JellyTPM will be documented in this file.
 - Replaced the inventory coverage sublabel with the active queue state to prevent status-cell resizing.
 - Compacted the coverage filters and kept a manual inventory refresh in the same toolbar.
 - Prevented stale or cached queue polls from leaving Queued and Generating counts or item states behind completed work.
+- Avoided full-library inventory rebuilds when validating individual generation jobs.
+- Coalesced concurrent forced inventory refreshes onto the newly built snapshot.
+- Updated security documentation for generation, replacement, and media-storage risks.
+- Reorganized the README around current coverage, preview, queue, and regeneration behavior.
 

@@ -108,6 +108,62 @@ public sealed class TrickplayInventoryService
         return snapshot.Items.FirstOrDefault(item => item.Id == itemId);
     }
 
+    /// <summary>
+    /// Builds one current inventory row without scanning every library item.
+    /// </summary>
+    internal async Task<TrickplayItemSummary?> GetCurrentItemAsync(
+        Guid itemId,
+        Guid? expectedLibraryId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var video = _libraryManager.GetItemById(itemId) as Video;
+        if (video is null)
+        {
+            return null;
+        }
+
+        var containingLibraryIds = _libraryManager
+            .GetCollectionFolders(video)
+            .Select(folder => folder.Id)
+            .ToHashSet();
+        var folder = _libraryManager.GetVirtualFolders().FirstOrDefault(candidate =>
+            Guid.TryParse(candidate.ItemId, out var libraryId)
+            && containingLibraryIds.Contains(libraryId)
+            && (!expectedLibraryId.HasValue || libraryId == expectedLibraryId.Value)
+            && candidate.CollectionType is not (CollectionTypeOptions.boxsets
+                or CollectionTypeOptions.music
+                or CollectionTypeOptions.books));
+        if (folder is null || !Guid.TryParse(folder.ItemId, out var resolvedLibraryId))
+        {
+            return null;
+        }
+
+        var options = folder.LibraryOptions ?? new LibraryOptions();
+        var trickplayOptions = _serverConfigurationManager.Configuration.TrickplayOptions;
+        var configuredWidths = (trickplayOptions.WidthResolutions ?? [])
+            .Where(width => width > 0)
+            .Select(NormalizeEvenWidth)
+            .Where(width => width > 0)
+            .Distinct()
+            .Order()
+            .ToArray();
+        var resolutions = await _trickplayManager
+            .GetTrickplayResolutions(itemId)
+            .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return BuildItem(
+            video,
+            resolvedLibraryId,
+            folder.Name ?? string.Empty,
+            options.EnableTrickplayImageExtraction,
+            Plugin.Instance?.Configuration.IncludeExtras ?? false,
+            trickplayOptions.Interval,
+            configuredWidths,
+            resolutions.Values.ToArray());
+    }
+
     /// <summary>Invalidates the cached inventory after trickplay data changes.</summary>
     public void Invalidate()
     {
@@ -155,7 +211,8 @@ public sealed class TrickplayInventoryService
         CancellationToken cancellationToken)
     {
         var cacheSeconds = Math.Clamp(Plugin.Instance?.Configuration.InventoryCacheSeconds ?? 30, 5, 300);
-        var cached = _snapshot;
+        var observedSnapshot = _snapshot;
+        var cached = observedSnapshot;
         if (!refresh
             && cached is not null
             && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))
@@ -167,6 +224,13 @@ public sealed class TrickplayInventoryService
         try
         {
             cached = _snapshot;
+            if (refresh
+                && cached is not null
+                && !ReferenceEquals(cached, observedSnapshot))
+            {
+                return cached;
+            }
+
             if (!refresh
                 && cached is not null
                 && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))
