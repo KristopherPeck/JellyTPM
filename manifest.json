@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "5093090e-a08a-40cb-b9e4-97de28a2d6e2",
+    "name": "JellyTPM",
+    "description": "Audit native trickplay coverage and manage generation by library and item.",
+    "overview": "Jellyfin Trickplay Manager",
+    "owner": "KristopherPeck",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "Initial beta release for Jellyfin 12.4.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.1.0.0/JellyTPM_0.1.0.0.zip",
+        "checksum": "",
+        "timestamp": "2026-10-29T00:00:00Z"
+      }
+    ]
+  }
+]

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JellyTPM</title>
+</head>
+<body>
+<div id="JellyTPMPage"
+     data-role="page"
+     class="page type-interior pluginConfigurationPage"
+     data-require="emby-button,emby-input,emby-select">
+    <style>
+        .jt-page { max-width: 1200px; }
+        .jt-muted { opacity: .72; }
+        .jt-message { min-height: 1.5em; margin: .75em 0; }
+        .jt-message.error { color: #ff8a80; }
+        .jt-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .75em; margin: 1.25em 0; }
+        .jt-card { border: 1px solid rgba(255,255,255,.16); border-radius: .45em; padding: 1em; background: rgba(255,255,255,.04); }
+        .jt-card strong { display: block; margin-top: .25em; font-size: 1.65em; }
+        .jt-toolbar { display: flex; flex-wrap: wrap; gap: .75em; align-items: flex-end; margin: 1.5em 0 1em; }
+        .jt-toolbar .inputContainer { flex: 1 1 16em; margin-bottom: 0; }
+        .jt-toolbar .selectContainer { flex: 0 1 16em; margin-bottom: 0; }
+        .jt-toolbar button { height: 2.75rem; min-height: 2.75rem; margin-bottom: 0; }
+        .jt-table-wrap { overflow-x: auto; }
+        .jt-table { width: 100%; border-collapse: collapse; }
+        .jt-table th, .jt-table td { padding: .7em; border-bottom: 1px solid rgba(255,255,255,.12); text-align: left; vertical-align: top; }
+        .jt-table th { white-space: nowrap; }
+        .jt-progress { min-width: 10em; }
+        .jt-progress progress { width: 100%; }
+        .jt-status { display: inline-block; padding: .2em .55em; border-radius: 1em; background: rgba(255,255,255,.12); white-space: nowrap; }
+        .jt-status-available { background: rgba(0,200,120,.22); }
+        .jt-status-missing { background: rgba(255,90,90,.22); }
+        .jt-status-partial { background: rgba(255,190,60,.22); }
+        .jt-pager { display: flex; justify-content: center; align-items: center; gap: 1em; margin: 1.25em 0; }
+        .jt-page-info { min-width: 12em; text-align: center; }
+        .jt-widths { white-space: nowrap; }
+        .jt-context { min-width: 12em; white-space: pre-line; }
+        @media (max-width: 700px) {
+            .jt-hide-small { display: none; }
+        }
+    </style>
+
+    <div data-role="content">
+        <div class="content-primary jt-page">
+            <h1>JellyTPM</h1>
+            <p class="jt-muted">Native Jellyfin trickplay coverage by library and item. This first milestone is read-only.</p>
+
+            <div id="globalMessage" class="jt-message" role="status" aria-live="polite"></div>
+
+            <section aria-labelledby="coverageHeading">
+                <h2 id="coverageHeading">Server coverage</h2>
+                <div class="jt-summary">
+                    <div class="jt-card"><span>Enabled libraries</span><strong id="enabledLibraries">-</strong></div>
+                    <div class="jt-card"><span>Eligible items</span><strong id="eligibleItems">-</strong></div>
+                    <div class="jt-card"><span>Available</span><strong id="availableItems">-</strong></div>
+                    <div class="jt-card"><span>Partial</span><strong id="partialItems">-</strong></div>
+                    <div class="jt-card"><span>Missing</span><strong id="missingItems">-</strong></div>
+                    <div class="jt-card"><span>Complete</span><strong id="completionPercentage">-</strong></div>
+                </div>
+                <p id="snapshotInfo" class="jt-muted"></p>
+                <p id="partialExplanation" class="jt-muted"></p>
+            </section>
+
+            <section aria-labelledby="librariesHeading">
+                <h2 id="librariesHeading">Libraries</h2>
+                <div class="jt-table-wrap">
+                    <table class="jt-table">
+                        <thead>
+                        <tr>
+                            <th>Library</th>
+                            <th>Enabled</th>
+                            <th>Eligible</th>
+                            <th>Available</th>
+                            <th>Partial</th>
+                            <th>Missing</th>
+                            <th>Coverage</th>
+                        </tr>
+                        </thead>
+                        <tbody id="libraryRows"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section aria-labelledby="itemsHeading">
+                <h2 id="itemsHeading">Items</h2>
+                <div class="jt-toolbar">
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="itemSearch">Search titles, shows, or seasons</label>
+                        <input is="emby-input" id="itemSearch" type="search" maxlength="200" autocomplete="off">
+                    </div>
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="libraryFilter">Library</label>
+                        <select is="emby-select" id="libraryFilter"><option value="">All libraries</option></select>
+                    </div>
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="statusFilter">Status</label>
+                        <select is="emby-select" id="statusFilter">
+                            <option value="">All statuses</option>
+                            <option value="Available">Available</option>
+                            <option value="Partial">Partial</option>
+                            <option value="Missing">Missing</option>
+                            <option value="LibraryDisabled">Library disabled</option>
+                            <option value="NotEligible">Not eligible</option>
+                        </select>
+                    </div>
+                    <button is="emby-button" type="button" class="raised button-submit" id="applyFilters">Apply</button>
+                    <button is="emby-button" type="button" class="raised" id="refreshInventory">Refresh inventory</button>
+                </div>
+
+                <div class="jt-table-wrap">
+                    <table class="jt-table">
+                        <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Context</th>
+                            <th>Library</th>
+                            <th>Status</th>
+                            <th class="jt-hide-small">Expected</th>
+                            <th>Available</th>
+                            <th class="jt-hide-small">Thumbnails</th>
+                        </tr>
+                        </thead>
+                        <tbody id="itemRows"></tbody>
+                    </table>
+                </div>
+                <div class="jt-pager" aria-label="Item pages">
+                    <button is="emby-button" type="button" class="raised" id="previousItems">Previous</button>
+                    <span id="itemPageInfo" class="jt-page-info jt-muted"></span>
+                    <button is="emby-button" type="button" class="raised" id="nextItems">Next</button>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            var page = document.querySelector('#JellyTPMPage');
+            var startIndex = 0;
+            var pageSize = 50;
+            var totalItems = 0;
+            var initialized = false;
+
+            function byId(id) { return page.querySelector('#' + id); }
+
+            function api(path) {
+                return ApiClient.ajax({
+                    url: ApiClient.getUrl('JellyTPM/' + path),
+                    type: 'GET',
+                    dataType: 'json'
+                }).then(function (value) {
+                    var parsed = typeof value === 'string' ? JSON.parse(value) : value;
+                    return normalizeResponse(parsed);
+                });
+            }
+
+            function normalizeResponse(value) {
+                if (Array.isArray(value)) {
+                    return value.map(normalizeResponse);
+                }
+                if (!value || typeof value !== 'object') {
+                    return value;
+                }
+
+                var normalized = {};
+                Object.keys(value).forEach(function (key) {
+                    var normalizedKey = key.charAt(0).toLowerCase() + key.slice(1);
+                    normalized[normalizedKey] = normalizeResponse(value[key]);
+                });
+                return normalized;
+            }
+
+            function reportError(context, error) {
+                var status = error && (error.status || error.statusCode);
+                var detail = error && (error.message || error.statusText);
+                var response = error && error.responseText;
+                var diagnostic = context
+                    + (status ? ' (HTTP ' + status + ')' : '')
+                    + (detail ? ': ' + String(detail).slice(0, 200) : '');
+
+                console.error('JellyTPM request failed', {
+                    context: context,
+                    status: status || null,
+                    detail: detail ? String(detail).slice(0, 200) : null,
+                    response: response ? String(response).slice(0, 200) : null,
+                    error: error
+                });
+                setMessage(diagnostic + '. Open the browser console for details.', true);
+            }
+
+            function setMessage(message, isError) {
+                var target = byId('globalMessage');
+                target.textContent = message || '';
+                target.classList.toggle('error', Boolean(isError));
+            }
+
+            function appendCell(row, value, className) {
+                var cell = document.createElement('td');
+                cell.textContent = value == null ? '' : String(value);
+                if (className) { cell.className = className; }
+                row.appendChild(cell);
+                return cell;
+            }
+
+            function renderSummary(summary) {
+                byId('enabledLibraries').textContent = summary.enabledLibraryCount;
+                byId('eligibleItems').textContent = summary.eligibleItems;
+                byId('availableItems').textContent = summary.availableItems;
+                byId('partialItems').textContent = summary.partialItems;
+                byId('missingItems').textContent = summary.missingItems;
+                byId('completionPercentage').textContent = summary.completionPercentage.toFixed(1) + '%';
+                byId('snapshotInfo').textContent = 'Configured widths: '
+                    + (summary.configuredWidths.length ? summary.configuredWidths.join(', ') + ' px' : 'none')
+                    + ' | Snapshot: ' + new Date(summary.generatedAtUtc).toLocaleString();
+                byId('partialExplanation').textContent = summary.configuredWidths.length > 1
+                    ? 'Partial means an item has some, but not all, configured trickplay widths.'
+                    : 'With one configured width, eligible items are normally either Available or Missing; Partial requires multiple effective widths.';
+
+                var body = byId('libraryRows');
+                body.textContent = '';
+                summary.libraries.forEach(function (library) {
+                    var row = document.createElement('tr');
+                    appendCell(row, library.name);
+                    appendCell(row, library.trickplayEnabled ? 'Yes' : 'No');
+                    appendCell(row, library.eligibleItems);
+                    appendCell(row, library.availableItems);
+                    appendCell(row, library.partialItems);
+                    appendCell(row, library.missingItems);
+                    var progressCell = appendCell(row, '', 'jt-progress');
+                    if (library.completionPercentage == null) {
+                        progressCell.textContent = 'N/A';
+                        progressCell.title = 'Trickplay extraction is disabled for this library.';
+                    } else {
+                        var progress = document.createElement('progress');
+                        progress.max = 100;
+                        progress.value = library.completionPercentage;
+                        progress.setAttribute('aria-label', library.name + ' trickplay coverage');
+                        progressCell.appendChild(progress);
+                        progressCell.appendChild(document.createTextNode(' ' + library.completionPercentage.toFixed(1) + '%'));
+                    }
+                    body.appendChild(row);
+                });
+
+                var filter = byId('libraryFilter');
+                var selected = filter.value;
+                filter.textContent = '';
+                var all = document.createElement('option');
+                all.value = '';
+                all.textContent = 'All libraries';
+                filter.appendChild(all);
+                summary.libraries.forEach(function (library) {
+                    var option = document.createElement('option');
+                    option.value = library.id;
+                    option.textContent = library.name;
+                    filter.appendChild(option);
+                });
+                filter.value = selected;
+            }
+
+            function statusLabel(status) {
+                return String(status).replace(/([a-z])([A-Z])/g, '$1 $2');
+            }
+
+            function renderItems(result) {
+                totalItems = result.totalCount;
+                var body = byId('itemRows');
+                body.textContent = '';
+                result.items.forEach(function (item) {
+                    var row = document.createElement('tr');
+                    appendCell(row, item.name + (item.year ? ' (' + item.year + ')' : ''));
+                    var context = item.parentTitle || '';
+                    var contextDetails = [];
+                    if (item.seasonName) { contextDetails.push(item.seasonName); }
+                    if (item.extraType) { contextDetails.push(item.extraType); }
+                    if (contextDetails.length) {
+                        context += (context ? '\n' : '') + contextDetails.join(' | ');
+                    }
+                    appendCell(row, context || '-', 'jt-context');
+                    appendCell(row, item.libraryName);
+                    var statusCell = appendCell(row, '');
+                    var badge = document.createElement('span');
+                    badge.className = 'jt-status jt-status-' + String(item.status).toLowerCase();
+                    badge.textContent = item.statusLabel || statusLabel(item.status);
+                    if (item.eligibilityReason) { badge.title = item.eligibilityReason; }
+                    statusCell.appendChild(badge);
+                    appendCell(row, item.expectedWidths.length ? item.expectedWidths.join(', ') + ' px' : '-', 'jt-widths jt-hide-small');
+                    appendCell(row, item.resolutions.length ? item.resolutions.map(function (value) { return value.width; }).join(', ') + ' px' : '-', 'jt-widths');
+                    appendCell(row, item.resolutions.reduce(function (sum, value) { return sum + value.thumbnailCount; }, 0), 'jt-hide-small');
+                    body.appendChild(row);
+                });
+
+                var first = totalItems === 0 ? 0 : result.startIndex + 1;
+                var last = Math.min(result.startIndex + result.items.length, totalItems);
+                byId('itemPageInfo').textContent = first + '-' + last + ' of ' + totalItems;
+                byId('previousItems').disabled = result.startIndex <= 0;
+                byId('nextItems').disabled = result.startIndex + result.items.length >= totalItems;
+            }
+
+            function itemQuery(refresh) {
+                var parameters = [
+                    'startIndex=' + encodeURIComponent(startIndex),
+                    'limit=' + encodeURIComponent(pageSize)
+                ];
+                var libraryId = byId('libraryFilter').value;
+                var status = byId('statusFilter').value;
+                var search = byId('itemSearch').value.trim();
+                if (libraryId) { parameters.push('libraryId=' + encodeURIComponent(libraryId)); }
+                if (status) { parameters.push('status=' + encodeURIComponent(status)); }
+                if (search) { parameters.push('search=' + encodeURIComponent(search)); }
+                if (refresh) { parameters.push('refresh=true'); }
+                return 'Items?' + parameters.join('&');
+            }
+
+            function loadItems(refresh) {
+                setMessage('Loading item inventory...', false);
+                return api(itemQuery(refresh)).then(function (result) {
+                    renderItems(result);
+                    setMessage('', false);
+                }).catch(function (error) {
+                    reportError('Unable to load the item inventory', error);
+                });
+            }
+
+            function loadAll(refresh) {
+                setMessage('Scanning native trickplay coverage...', false);
+                var suffix = refresh ? '?refresh=true' : '';
+                return api('Summary' + suffix).then(function (summary) {
+                    renderSummary(summary);
+                    return api(itemQuery(false));
+                }).then(function (items) {
+                    renderItems(items);
+                    setMessage('', false);
+                }).catch(function (error) {
+                    reportError('Unable to load trickplay coverage', error);
+                });
+            }
+
+            function initialize() {
+                if (initialized) { return; }
+                initialized = true;
+                byId('applyFilters').addEventListener('click', function () { startIndex = 0; loadItems(false); });
+                byId('refreshInventory').addEventListener('click', function () { startIndex = 0; loadAll(true); });
+                byId('itemSearch').addEventListener('keydown', function (event) {
+                    if (event.key === 'Enter') { event.preventDefault(); startIndex = 0; loadItems(false); }
+                });
+                byId('previousItems').addEventListener('click', function () {
+                    startIndex = Math.max(0, startIndex - pageSize);
+                    loadItems(false);
+                });
+                byId('nextItems').addEventListener('click', function () {
+                    if (startIndex + pageSize < totalItems) { startIndex += pageSize; loadItems(false); }
+                });
+            }
+
+            page.addEventListener('viewshow', function () {
+                initialize();
+                loadAll(false);
+            });
+        }());
+    </script>
+</div>
+</body>
+</html>
