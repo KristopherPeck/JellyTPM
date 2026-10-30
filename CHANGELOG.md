@@ -52,4 +52,5 @@ All notable changes to JellyTPM will be documented in this file.
 - Updated security documentation for generation, replacement, and media-storage risks.
 - Reorganized the README around current coverage, preview, queue, and regeneration behavior.
 - Normalized manifest arrays so post-update verification works across PowerShell versions.
+- Added plugin-repository and manual-installation instructions to the main README.
 

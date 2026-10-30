@@ -68,6 +68,36 @@ Active jobs are never removed by history retention. Lowering the active-queue li
 
 JellyTPM should be installed only on the Jellyfin version targeted by its release manifest. Back up the Jellyfin data directory before testing beta releases or running broad replacement operations.
 
+## Installation
+
+### Plugin repository
+
+1. Open **Dashboard → Plugins → Repositories**.
+2. Select **Add**.
+3. Name the repository `JellyTPM` and use this URL:
+
+   ```text
+   https://raw.githubusercontent.com/KristopherPeck/JellyTPM/main/manifest.json
+   ```
+
+4. Open **Catalog** and install JellyTPM from the **General** category.
+5. Restart Jellyfin.
+6. Open **Dashboard → JellyTPM**.
+
+### Manual installation
+
+1. Download `JellyTPM_<version>.zip` from the matching [GitHub release](https://github.com/KristopherPeck/JellyTPM/releases).
+2. Extract the archive into a `JellyTPM` directory beneath Jellyfin's plugin directory.
+3. Restart Jellyfin.
+
+Common plugin locations include:
+
+| Installation | Plugin directory |
+| --- | --- |
+| Windows tray install | `%ProgramData%\Jellyfin\Server\plugins` |
+| Windows user install | `%LocalAppData%\jellyfin\plugins` |
+| Common Linux packages | `/var/lib/jellyfin/plugins` |
+
 ## Development
 
 JellyTPM is a conventional .NET Jellyfin server plugin. `Web/dashboard.html` is embedded directly in the plugin assembly; Node.js and Docker are not used.
