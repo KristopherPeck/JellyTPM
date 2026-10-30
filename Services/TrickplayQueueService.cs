@@ -48,7 +48,42 @@ public sealed class TrickplayQueueService : BackgroundService
             throw new InvalidOperationException("The video already has every expected trickplay resolution.");
         }
 
-        var result = await _jobStore.EnqueueAsync(item, cancellationToken).ConfigureAwait(false);
+        var result = await _jobStore
+            .EnqueueAsync(item, TrickplayJobOperation.GenerateMissing, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.Created)
+        {
+            WakeWorker();
+        }
+
+        return result;
+    }
+
+    /// <summary>Validates and queues destructive replacement generation for one video.</summary>
+    public async Task<TrickplayEnqueueResult> EnqueueRegenerateAsync(
+        Guid itemId,
+        CancellationToken cancellationToken)
+    {
+        var item = await _inventoryService.GetItemAsync(itemId, true, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("The video is not present in the JellyTPM inventory.");
+        if (!item.Eligible)
+        {
+            throw new InvalidOperationException("The video is not eligible for trickplay regeneration.");
+        }
+
+        if (!item.LibraryEnabled)
+        {
+            throw new InvalidOperationException("Trickplay extraction is disabled for this library.");
+        }
+
+        if (!item.Resolutions.Any(resolution => resolution.ThumbnailCount > 0))
+        {
+            throw new InvalidOperationException("The video has no existing trickplay data to replace.");
+        }
+
+        var result = await _jobStore
+            .EnqueueAsync(item, TrickplayJobOperation.Regenerate, cancellationToken)
+            .ConfigureAwait(false);
         if (result.Created)
         {
             WakeWorker();
@@ -170,11 +205,12 @@ public sealed class TrickplayQueueService : BackgroundService
     {
         try
         {
-            await _generationService.GenerateMissingAsync(job, stoppingToken).ConfigureAwait(false);
+            await _generationService.ExecuteAsync(job, stoppingToken).ConfigureAwait(false);
             await _jobStore.CompleteAsync(job.Id, stoppingToken).ConfigureAwait(false);
             _inventoryService.Invalidate();
             _logger.LogInformation(
-                "Completed JellyTPM generation job {JobId} for item {ItemName} ({ItemId}).",
+                "Completed JellyTPM {Operation} job {JobId} for item {ItemName} ({ItemId}).",
+                job.Operation,
                 job.Id,
                 job.ItemName,
                 job.ItemId);
@@ -188,7 +224,8 @@ public sealed class TrickplayQueueService : BackgroundService
         {
             _logger.LogError(
                 exception,
-                "JellyTPM generation job {JobId} failed for item {ItemName} ({ItemId}).",
+                "JellyTPM {Operation} job {JobId} failed for item {ItemName} ({ItemId}).",
+                job.Operation,
                 job.Id,
                 job.ItemName,
                 job.ItemId);

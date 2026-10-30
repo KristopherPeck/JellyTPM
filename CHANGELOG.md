@@ -26,6 +26,8 @@ All notable changes to JellyTPM will be documented in this file.
 - Persistent completed-job totals that can optionally follow retained history instead.
 - Television series and season context captured in new generation queue records.
 - Interactive trickplay previews with resolution selection and timestamp scrubbing.
+- Guarded single-item replacement regeneration from the trickplay Preview dialog.
+- Queue operation history distinguishing missing generation from regeneration.
 
 ### Fixed
 

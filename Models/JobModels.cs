@@ -23,7 +23,10 @@ public enum TrickplayJobStatus
 public enum TrickplayJobOperation
 {
     /// <summary>Generate missing configured resolutions without replacing valid data.</summary>
-    GenerateMissing
+    GenerateMissing,
+
+    /// <summary>Delete existing trickplay data and generate every configured resolution again.</summary>
+    Regenerate
 }
 
 /// <summary>A durable trickplay generation job exposed to administrators.</summary>

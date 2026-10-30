@@ -27,6 +27,7 @@ public sealed class TrickplayJobStore
     /// <summary>Creates a job unless an active job already exists for the item.</summary>
     public async Task<TrickplayEnqueueResult> EnqueueAsync(
         TrickplayItemSummary item,
+        TrickplayJobOperation operation,
         CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -36,7 +37,6 @@ public sealed class TrickplayJobStore
             var jobs = state.Jobs;
             var existing = jobs.FirstOrDefault(job =>
                 job.ItemId == item.Id
-                && job.Operation == TrickplayJobOperation.GenerateMissing
                 && job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating);
             if (existing is not null)
             {
@@ -52,7 +52,7 @@ public sealed class TrickplayJobStore
                 SeasonName = item.SeasonName,
                 LibraryId = item.LibraryId,
                 LibraryName = item.LibraryName,
-                Operation = TrickplayJobOperation.GenerateMissing,
+                Operation = operation,
                 Status = TrickplayJobStatus.Queued,
                 QueuedAtUtc = DateTime.UtcNow
             };

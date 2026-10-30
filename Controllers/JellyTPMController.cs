@@ -101,6 +101,37 @@ public sealed class JellyTPMController : ControllerBase
         }
     }
 
+    /// <summary>Queues destructive replacement trickplay generation for one video.</summary>
+    [HttpPost("Items/{itemId:guid}/Regenerate")]
+    [ProducesResponseType<TrickplayEnqueueResult>(StatusCodes.Status200OK)]
+    [ProducesResponseType<TrickplayEnqueueResult>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TrickplayEnqueueResult>> Regenerate(
+        Guid itemId,
+        [FromQuery] bool confirm,
+        CancellationToken cancellationToken)
+    {
+        if (!confirm)
+        {
+            return BadRequest("Regeneration requires explicit destructive-operation confirmation.");
+        }
+
+        try
+        {
+            var result = await _queueService.EnqueueRegenerateAsync(itemId, cancellationToken).ConfigureAwait(false);
+            return result.Created ? Accepted(result) : Ok(result);
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
     /// <summary>Queues Missing and Partial videos matching the current dashboard filters.</summary>
     [HttpPost("Items/GenerateFiltered")]
     [ProducesResponseType<TrickplayBatchEnqueueResult>(StatusCodes.Status202Accepted)]

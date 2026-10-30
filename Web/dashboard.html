@@ -71,6 +71,9 @@
         .jt-preview-controls { display: grid; grid-template-columns: minmax(10em, 14em) 1fr; gap: 1em; align-items: end; }
         .jt-preview-slider { width: 100%; }
         .jt-preview-time { display: flex; justify-content: space-between; margin-top: .35em; }
+        .jt-preview-actions { display: flex; justify-content: flex-end; margin-top: 1em; }
+        .jt-danger-action { background: rgba(210,55,55,.85) !important; color: #fff !important; }
+        .jt-danger-action:disabled { background: rgba(170,170,170,.22) !important; color: #ddd !important; }
         @media (max-width: 700px) {
             .jt-hide-small { display: none; }
             .jt-preview-controls { grid-template-columns: 1fr; }
@@ -197,6 +200,7 @@
                         <tr>
                             <th>Item</th>
                             <th>Context</th>
+                            <th>Operation</th>
                             <th>Library</th>
                             <th>Status</th>
                             <th>Queued</th>
@@ -267,6 +271,9 @@
                         </div>
                     </div>
                     <p id="previewStatus" class="jt-muted" role="status" aria-live="polite"></p>
+                    <div class="jt-preview-actions">
+                        <button is="emby-button" type="button" class="raised jt-danger-action" id="regeneratePreview">Regenerate</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -450,6 +457,10 @@
                 return String(status).replace(/([a-z])([A-Z])/g, '$1 $2');
             }
 
+            function operationLabel(operation) {
+                return operation === 'Regenerate' ? 'Regenerate' : 'Generate missing';
+            }
+
             function formatDuration(milliseconds) {
                 var totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
                 var hours = Math.floor(totalSeconds / 3600);
@@ -581,7 +592,19 @@
                 byId('previewPosition').value = 0;
                 byId('previewModal').hidden = false;
                 configurePreviewResolution();
+                updatePreviewRegenerateState();
                 byId('closePreview').focus();
+            }
+
+            function updatePreviewRegenerateState() {
+                if (!previewState) { return; }
+                var activeStatus = activeJobStates[String(previewState.item.id).toLowerCase()];
+                var button = byId('regeneratePreview');
+                button.disabled = Boolean(activeStatus);
+                button.textContent = activeStatus ? statusLabel(activeStatus) : 'Regenerate';
+                button.title = activeStatus
+                    ? 'This item already has an active generation job.'
+                    : 'Delete and rebuild all trickplay data for this item.';
             }
 
             function closePreview() {
@@ -726,6 +749,7 @@
                 result.activeJobs.forEach(function (job) {
                     activeJobStates[String(job.itemId).toLowerCase()] = job.status;
                 });
+                updatePreviewRegenerateState();
                 byId('queuedJobs').textContent = result.counts.queued;
                 byId('generatingJobs').textContent = result.counts.generating;
                 byId('completedJobs').textContent = result.counts.completed;
@@ -739,6 +763,7 @@
                         var context = job.parentTitle || '';
                         if (job.seasonName) { context += (context ? '\n' : '') + job.seasonName; }
                         appendCell(row, context || '-', 'jt-context');
+                        appendCell(row, operationLabel(job.operation));
                         appendCell(row, job.libraryName);
                         var statusCell = appendCell(row, '');
                         var badge = document.createElement('span');
@@ -892,6 +917,35 @@
                 });
             }
 
+            function regeneratePreview() {
+                if (!previewState) { return; }
+                var item = previewState.item;
+                var warning = 'Regenerate all trickplay data for ' + item.name + '?\n\n'
+                    + 'Existing trickplay files and database records will be removed before replacement generation begins. '
+                    + 'If generation fails, this item may temporarily have no trickplay previews.';
+                if (!window.confirm(warning)) { return; }
+
+                var button = byId('regeneratePreview');
+                button.disabled = true;
+                button.textContent = 'Queuing...';
+                byId('previewStatus').textContent = 'Queuing destructive trickplay regeneration...';
+                apiRequest('Items/' + encodeURIComponent(item.id) + '/Regenerate?confirm=true', 'POST').then(function (result) {
+                    closePreview();
+                    setMessage(result.created
+                        ? 'Regeneration queued for ' + item.name + '.'
+                        : item.name + ' already has a queued or generating job.', false);
+                    return loadJobs(true);
+                }).then(function () {
+                    return loadItems(false);
+                }).catch(function (error) {
+                    if (previewState) {
+                        byId('previewStatus').textContent = 'Unable to queue regeneration. Check the browser console for details.';
+                        updatePreviewRegenerateState();
+                    }
+                    reportError('Unable to queue regeneration for ' + item.name, error);
+                });
+            }
+
             function cancelJob(button) {
                 button.disabled = true;
                 apiRequest('Jobs/' + encodeURIComponent(button.dataset.jobId), 'DELETE').then(function () {
@@ -942,6 +996,7 @@
                     if (button) { generateMissing(button); }
                 });
                 byId('closePreview').addEventListener('click', closePreview);
+                byId('regeneratePreview').addEventListener('click', regeneratePreview);
                 byId('previewResolution').addEventListener('change', configurePreviewResolution);
                 byId('previewPosition').addEventListener('input', schedulePreviewFrame);
                 byId('previewModal').addEventListener('click', function (event) {

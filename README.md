@@ -23,6 +23,7 @@ Implemented:
 - Server-paged title inventory with library, status, and search filters
 - Expected and available resolution reporting
 - Interactive trickplay frame previews with resolution selection and timeline scrubbing
+- Guarded single-item trickplay regeneration through the durable queue
 - Short-lived server-side inventory snapshots
 - Administrator-only API routes
 - Embedded Jellyfin dashboard without Node.js or a frontend build toolchain
@@ -38,7 +39,6 @@ Implemented:
 
 Planned:
 
-- Explicit replacement regeneration
 - Retry failed jobs and request cancellation of active work
 - Native scheduled-task activity detection
 
@@ -55,6 +55,8 @@ Planned:
 JellyTPM does not report a numeric percentage for the active FFmpeg operation because Jellyfin does not expose reliable per-file trickplay progress through its plugin API.
 
 Generate missing uses Jellyfin's non-replacement operation. A job is marked Completed only after JellyTPM confirms that every expected resolution exists. Queue and history records are stored in the plugin data directory and completed records are retained for 30 days by default.
+
+Regenerate is available from an item's Preview dialog when existing trickplay data is present. Jellyfin removes the existing files and database records before rebuilding them, so JellyTPM requires explicit confirmation and runs only one durable job for the item at a time. A failed replacement can temporarily leave the item without trickplay data; the queue history preserves the operation and failure result.
 
 Terminal history is limited to 50 records by default. Queued and generating jobs never count against that limit. The completed-job total is preserved when detailed history expires or is cleared by default; administrators can instead configure it to reflect only retained records. Filtered batch generation has a separate default maximum of 500 candidates per request, so queue safety and history retention remain independent.
 

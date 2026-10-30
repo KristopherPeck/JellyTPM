@@ -27,8 +27,8 @@ public sealed class TrickplayGenerationService
         _logger = logger;
     }
 
-    /// <summary>Generates missing trickplay resolutions and verifies the result.</summary>
-    public async Task GenerateMissingAsync(TrickplayJob job, CancellationToken cancellationToken)
+    /// <summary>Executes the requested trickplay operation and verifies the result.</summary>
+    public async Task ExecuteAsync(TrickplayJob job, CancellationToken cancellationToken)
     {
         var inventoryItem = await _inventoryService
             .GetItemAsync(job.ItemId, true, cancellationToken)
@@ -45,7 +45,8 @@ public sealed class TrickplayGenerationService
             throw new TrickplayGenerationException("Trickplay extraction is no longer enabled for this library.");
         }
 
-        if (inventoryItem.Status == TrickplayInventoryStatus.Available)
+        if (job.Operation == TrickplayJobOperation.GenerateMissing
+            && inventoryItem.Status == TrickplayInventoryStatus.Available)
         {
             _logger.LogInformation(
                 "Skipping JellyTPM job {JobId}; item {ItemId} became complete before generation started.",
@@ -62,13 +63,21 @@ public sealed class TrickplayGenerationService
         var libraryOptions = folder.LibraryOptions
             ?? throw new TrickplayGenerationException("The containing library has no configuration.");
 
+        var replace = job.Operation switch
+        {
+            TrickplayJobOperation.GenerateMissing => false,
+            TrickplayJobOperation.Regenerate => true,
+            _ => throw new TrickplayGenerationException("The requested trickplay operation is not supported.")
+        };
+
         _logger.LogInformation(
-            "Starting JellyTPM generate-missing job {JobId} for item {ItemName} ({ItemId}).",
+            "Starting JellyTPM {Operation} job {JobId} for item {ItemName} ({ItemId}).",
+            job.Operation,
             job.Id,
             job.ItemName,
             job.ItemId);
         await _trickplayManager
-            .RefreshTrickplayDataAsync(video, false, libraryOptions, cancellationToken)
+            .RefreshTrickplayDataAsync(video, replace, libraryOptions, cancellationToken)
             .ConfigureAwait(false);
 
         var resolutions = await _trickplayManager
