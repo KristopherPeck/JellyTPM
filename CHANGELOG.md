@@ -23,6 +23,9 @@ All notable changes to JellyTPM will be documented in this file.
 - Four repository title-card concepts in the JellyTPM visual family.
 - Canonical repository artwork and an exact 16:9 catalog image referenced by the plugin manifest.
 - Accessible Coverage, Generation Queue, and Settings tabs for a less crowded dashboard.
+- Persistent completed-job totals that can optionally follow retained history instead.
+- Television series and season context captured in new generation queue records.
+- Interactive trickplay previews with resolution selection and timestamp scrubbing.
 
 ### Fixed
 
@@ -37,4 +40,6 @@ All notable changes to JellyTPM will be documented in this file.
 - Matched combined show and season searches using Jellyfin's actual season names.
 - Applied green, yellow, gray, and red queue-state styling and green 100% coverage bars.
 - Renamed the Jellyfin sidebar entry from Trickplay Dashboard to JellyTPM.
+- Replaced the inventory coverage sublabel with the active queue state to prevent status-cell resizing.
+- Compacted the coverage filters and kept a manual inventory refresh in the same toolbar.
 

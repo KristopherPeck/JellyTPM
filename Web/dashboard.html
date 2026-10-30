@@ -9,7 +9,7 @@
 <div id="JellyTPMPage"
      data-role="page"
      class="page type-interior pluginConfigurationPage"
-     data-require="emby-button,emby-input,emby-select">
+     data-require="emby-button,emby-checkbox,emby-input,emby-select">
     <style>
         .jt-page { max-width: 1200px; }
         .jt-muted { opacity: .72; }
@@ -21,6 +21,8 @@
         .jt-toolbar { display: flex; flex-wrap: wrap; gap: .75em; align-items: flex-end; margin: 1.5em 0 1em; }
         .jt-toolbar .inputContainer { flex: 1 1 16em; margin-bottom: 0; }
         .jt-toolbar .selectContainer { flex: 0 1 16em; margin-bottom: 0; }
+        .jt-toolbar .jt-library-filter { flex-basis: 12em; }
+        .jt-toolbar .jt-status-filter { flex: 0 0 12em; min-width: 12em; }
         .jt-toolbar button { height: 2.75rem; min-height: 2.75rem; margin-bottom: 0; }
         .jt-table-wrap { overflow-x: auto; }
         .jt-table { width: 100%; border-collapse: collapse; }
@@ -45,17 +47,34 @@
         .jt-context { min-width: 12em; white-space: pre-line; }
         .jt-actions { white-space: nowrap; }
         .jt-actions button { margin: 0; min-width: auto; }
+        .jt-actions button + button { margin-left: .5em; }
+        .jt-item-actions { min-width: 15.5em; }
+        .jt-item-actions .btnGenerateMissing { min-width: 9.5em; }
         .jt-error-detail { max-width: 24em; white-space: normal; }
         .jt-section-actions { display: flex; flex-wrap: wrap; gap: .75em; margin: .75em 0; }
         .jt-settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 1em; max-width: 52em; }
+        .jt-checkbox-setting { align-self: start; padding-top: 1.65em; }
+        .jt-checkbox-setting .emby-checkbox-label { display: inline-flex; align-items: center; }
         .jt-help { display: block; margin-top: .35em; font-size: .9em; }
         .jt-tabs { display: flex; gap: .25em; margin: 1.25em 0; border-bottom: 1px solid rgba(255,255,255,.16); overflow-x: auto; }
         .jt-tab { border: 0; border-bottom: .2em solid transparent; border-radius: .35em .35em 0 0; padding: .8em 1.1em; background: transparent; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
         .jt-tab:hover, .jt-tab:focus-visible { background: rgba(255,255,255,.07); }
         .jt-tab[aria-selected="true"] { border-bottom-color: #00a4dc; background: rgba(0,164,220,.12); }
         .jt-tab-panel[hidden] { display: none !important; }
+        .jt-preview-modal[hidden] { display: none !important; }
+        .jt-preview-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 1em; background: rgba(0,0,0,.78); }
+        .jt-preview-dialog { width: min(46em, 100%); max-height: calc(100vh - 2em); overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: .55em; padding: 1.25em; background: #171717; box-shadow: 0 1em 3em rgba(0,0,0,.55); }
+        .jt-preview-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1em; }
+        .jt-preview-header h2 { margin-top: 0; }
+        .jt-preview-canvas-wrap { display: flex; justify-content: center; min-height: 12em; margin: 1em 0; padding: 1em; border-radius: .35em; background: #080808; }
+        .jt-preview-canvas { align-self: center; max-width: 100%; height: auto; }
+        .jt-preview-controls { display: grid; grid-template-columns: minmax(10em, 14em) 1fr; gap: 1em; align-items: end; }
+        .jt-preview-slider { width: 100%; }
+        .jt-preview-time { display: flex; justify-content: space-between; margin-top: .35em; }
         @media (max-width: 700px) {
             .jt-hide-small { display: none; }
+            .jt-preview-controls { grid-template-columns: 1fr; }
+            .jt-checkbox-setting { padding-top: 0; }
         }
     </style>
 
@@ -114,11 +133,11 @@
                         <label class="inputLabel inputLabelUnfocused" for="itemSearch">Search titles, shows, or seasons</label>
                         <input is="emby-input" id="itemSearch" type="search" maxlength="200" autocomplete="off">
                     </div>
-                    <div class="selectContainer">
+                    <div class="selectContainer jt-library-filter">
                         <label class="selectLabel" for="libraryFilter">Library</label>
                         <select is="emby-select" id="libraryFilter"><option value="">All libraries</option></select>
                     </div>
-                    <div class="selectContainer">
+                    <div class="selectContainer jt-status-filter">
                         <label class="selectLabel" for="statusFilter">Status</label>
                         <select is="emby-select" id="statusFilter">
                             <option value="">All statuses</option>
@@ -130,8 +149,8 @@
                         </select>
                     </div>
                     <button is="emby-button" type="button" class="raised button-submit" id="applyFilters">Apply</button>
-                    <button is="emby-button" type="button" class="raised" id="queueFiltered">Queue filtered missing</button>
-                    <button is="emby-button" type="button" class="raised" id="refreshInventory">Refresh inventory</button>
+                    <button is="emby-button" type="button" class="raised" id="queueFiltered">Queue filtered</button>
+                    <button is="emby-button" type="button" class="raised" id="refreshInventory" title="Force a fresh Jellyfin trickplay inventory scan">Refresh</button>
                 </div>
 
                 <div class="jt-table-wrap">
@@ -165,7 +184,7 @@
                 <div class="jt-summary">
                     <div class="jt-card"><span>Queued</span><strong id="queuedJobs">0</strong></div>
                     <div class="jt-card"><span>Generating</span><strong id="generatingJobs">0</strong></div>
-                    <div class="jt-card"><span>Completed</span><strong id="completedJobs">0</strong></div>
+                    <div class="jt-card"><span id="completedJobsLabel">Completed total</span><strong id="completedJobs">0</strong></div>
                     <div class="jt-card"><span>Failed</span><strong id="failedJobs">0</strong></div>
                 </div>
                 <div class="jt-section-actions">
@@ -177,6 +196,7 @@
                         <thead>
                         <tr>
                             <th>Item</th>
+                            <th>Context</th>
                             <th>Library</th>
                             <th>Status</th>
                             <th>Queued</th>
@@ -204,6 +224,13 @@
                         <input is="emby-input" id="maximumRetainedJobs" type="number" min="1" max="500" step="1">
                         <span class="jt-muted jt-help">Defaults to 50. Active jobs do not count toward this limit.</span>
                     </div>
+                    <div class="inputContainer jt-checkbox-setting">
+                        <label class="emby-checkbox-label" for="preserveCompletedCount">
+                            <input is="emby-checkbox" id="preserveCompletedCount" type="checkbox">
+                            <span>Preserve completed total</span>
+                        </label>
+                        <span class="jt-muted jt-help">Keeps the Completed counter when detailed history is cleared or expires.</span>
+                    </div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="maximumBatchSize">Maximum filtered batch size</label>
                         <input is="emby-input" id="maximumBatchSize" type="number" min="1" max="5000" step="1">
@@ -212,6 +239,36 @@
                 </div>
                 <button is="emby-button" type="button" class="raised button-submit" id="saveSettings">Save settings</button>
             </section>
+
+            <div id="previewModal" class="jt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="previewTitle" hidden>
+                <div class="jt-preview-dialog">
+                    <div class="jt-preview-header">
+                        <div>
+                            <h2 id="previewTitle">Trickplay preview</h2>
+                            <div id="previewContext" class="jt-muted"></div>
+                        </div>
+                        <button is="emby-button" type="button" class="raised" id="closePreview" aria-label="Close trickplay preview">Close</button>
+                    </div>
+                    <div class="jt-preview-canvas-wrap">
+                        <canvas id="previewCanvas" class="jt-preview-canvas" role="img" aria-label="Selected trickplay frame"></canvas>
+                    </div>
+                    <div class="jt-preview-controls">
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="previewResolution">Resolution</label>
+                            <select is="emby-select" id="previewResolution"></select>
+                        </div>
+                        <div>
+                            <label class="inputLabel inputLabelUnfocused" for="previewPosition">Position</label>
+                            <input id="previewPosition" class="jt-preview-slider" type="range" min="0" value="0">
+                            <div class="jt-preview-time jt-muted">
+                                <span id="previewCurrentTime">0:00</span>
+                                <span id="previewDuration">0:00</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="previewStatus" class="jt-muted" role="status" aria-live="polite"></p>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -228,7 +285,11 @@
             var activeJobStates = {};
             var currentItemResult = null;
             var jobListLimit = 50;
+            var preserveCompletedCount = true;
             var activeTab = 'coverage';
+            var previewState = null;
+            var previewRequestId = 0;
+            var previewRenderTimer = null;
 
             function byId(id) { return page.querySelector('#' + id); }
 
@@ -267,6 +328,15 @@
             }
 
             function api(path) { return apiRequest(path, 'GET'); }
+
+            function apiBlob(path) {
+                return ApiClient.ajax({
+                    url: ApiClient.getUrl(path),
+                    type: 'GET'
+                }).then(function (response) {
+                    return response && typeof response.blob === 'function' ? response.blob() : response;
+                });
+            }
 
             function normalizeResponse(value) {
                 if (Array.isArray(value)) {
@@ -378,6 +448,155 @@
                 return String(status).replace(/([a-z])([A-Z])/g, '$1 $2');
             }
 
+            function formatDuration(milliseconds) {
+                var totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+                var hours = Math.floor(totalSeconds / 3600);
+                var minutes = Math.floor((totalSeconds % 3600) / 60);
+                var seconds = totalSeconds % 60;
+                return (hours ? hours + ':' + String(minutes).padStart(2, '0') : minutes)
+                    + ':' + String(seconds).padStart(2, '0');
+            }
+
+            function selectedPreviewResolution() {
+                if (!previewState) { return null; }
+                var width = Number(byId('previewResolution').value);
+                return previewState.item.resolutions.find(function (resolution) {
+                    return resolution.width === width;
+                }) || null;
+            }
+
+            function configurePreviewResolution() {
+                var resolution = selectedPreviewResolution();
+                if (!resolution) { return; }
+                var lastFrameTime = Math.max(0, (resolution.thumbnailCount - 1) * resolution.interval);
+                var runtime = previewState.item.runTimeTicks
+                    ? Math.floor(previewState.item.runTimeTicks / 10000)
+                    : lastFrameTime;
+                var maximum = Math.min(runtime, lastFrameTime) || lastFrameTime;
+                var slider = byId('previewPosition');
+                slider.max = maximum;
+                slider.step = Math.max(1, resolution.interval);
+                slider.value = Math.min(Number(slider.value) || 0, maximum);
+                previewState.tileKey = null;
+                previewState.tileImage = null;
+                byId('previewDuration').textContent = formatDuration(maximum);
+                renderPreviewFrame();
+            }
+
+            function drawPreviewImage(image, resolution, sourceX, sourceY, frameIndex) {
+                var canvas = byId('previewCanvas');
+                canvas.width = resolution.width;
+                canvas.height = resolution.height;
+                var context = canvas.getContext('2d');
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                context.drawImage(
+                    image,
+                    sourceX,
+                    sourceY,
+                    resolution.width,
+                    resolution.height,
+                    0,
+                    0,
+                    resolution.width,
+                    resolution.height);
+                byId('previewStatus').textContent = 'Frame ' + (frameIndex + 1)
+                    + ' of ' + resolution.thumbnailCount + ' at ' + resolution.width + ' px.';
+            }
+
+            function schedulePreviewFrame() {
+                if (previewRenderTimer) { clearTimeout(previewRenderTimer); }
+                previewRenderTimer = setTimeout(function () {
+                    previewRenderTimer = null;
+                    renderPreviewFrame();
+                }, 100);
+            }
+
+            function renderPreviewFrame() {
+                var resolution = selectedPreviewResolution();
+                if (!previewState || !resolution || resolution.thumbnailCount < 1) { return; }
+                var position = Number(byId('previewPosition').value) || 0;
+                var frameIndex = Math.min(
+                    resolution.thumbnailCount - 1,
+                    Math.max(0, Math.floor(position / resolution.interval)));
+                var framesPerTile = resolution.tileWidth * resolution.tileHeight;
+                var tileIndex = Math.floor(frameIndex / framesPerTile);
+                var tileOffset = frameIndex % framesPerTile;
+                var sourceX = (tileOffset % resolution.tileWidth) * resolution.width;
+                var sourceY = Math.floor(tileOffset / resolution.tileWidth) * resolution.height;
+                var tileKey = resolution.width + ':' + tileIndex;
+                var requestId = ++previewRequestId;
+                byId('previewCurrentTime').textContent = formatDuration(frameIndex * resolution.interval);
+                if (previewState.tileKey === tileKey && previewState.tileImage) {
+                    drawPreviewImage(previewState.tileImage, resolution, sourceX, sourceY, frameIndex);
+                    return;
+                }
+                byId('previewStatus').textContent = 'Loading preview frame...';
+                var path = 'Videos/' + encodeURIComponent(previewState.item.id)
+                    + '/Trickplay/' + encodeURIComponent(resolution.width)
+                    + '/' + encodeURIComponent(tileIndex) + '.jpg';
+                apiBlob(path).then(function (blob) {
+                    if (!(blob instanceof Blob)) { throw new Error('Jellyfin returned an invalid trickplay image.'); }
+                    var objectUrl = URL.createObjectURL(blob);
+                    var image = new Image();
+                    image.onload = function () {
+                        URL.revokeObjectURL(objectUrl);
+                        if (!previewState || requestId !== previewRequestId) { return; }
+                        previewState.tileKey = tileKey;
+                        previewState.tileImage = image;
+                        drawPreviewImage(image, resolution, sourceX, sourceY, frameIndex);
+                    };
+                    image.onerror = function () {
+                        URL.revokeObjectURL(objectUrl);
+                        if (previewState && requestId === previewRequestId) {
+                            byId('previewStatus').textContent = 'The trickplay tile could not be displayed.';
+                        }
+                    };
+                    image.src = objectUrl;
+                }).catch(function (error) {
+                    if (previewState && requestId === previewRequestId) {
+                        byId('previewStatus').textContent = 'Unable to load this trickplay frame.';
+                        console.error('JellyTPM trickplay preview failed', error);
+                    }
+                });
+            }
+
+            function openPreview(item, opener) {
+                if (!item || !item.resolutions.length) { return; }
+                previewState = { item: item, opener: opener, tileKey: null, tileImage: null };
+                previewRequestId++;
+                byId('previewTitle').textContent = item.name + (item.year ? ' (' + item.year + ')' : '');
+                var context = [item.parentTitle, item.seasonName].filter(Boolean).join(' - ');
+                byId('previewContext').textContent = context || item.libraryName;
+                var resolutionSelect = byId('previewResolution');
+                resolutionSelect.textContent = '';
+                item.resolutions.forEach(function (resolution) {
+                    var option = document.createElement('option');
+                    option.value = resolution.width;
+                    option.textContent = resolution.width + ' x ' + resolution.height
+                        + ' (' + resolution.thumbnailCount + ' frames)';
+                    resolutionSelect.appendChild(option);
+                });
+                byId('previewPosition').value = 0;
+                byId('previewModal').hidden = false;
+                configurePreviewResolution();
+                byId('closePreview').focus();
+            }
+
+            function closePreview() {
+                var opener = previewState && previewState.opener;
+                previewState = null;
+                previewRequestId++;
+                if (previewRenderTimer) {
+                    clearTimeout(previewRenderTimer);
+                    previewRenderTimer = null;
+                }
+                byId('previewModal').hidden = true;
+                byId('previewStatus').textContent = '';
+                var canvas = byId('previewCanvas');
+                canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                if (opener && document.contains(opener)) { opener.focus(); }
+            }
+
             function renderItems(result) {
                 currentItemResult = result;
                 totalItems = result.totalCount;
@@ -410,16 +629,21 @@
                         badge.title = item.eligibilityReason;
                     }
                     statusCell.appendChild(badge);
-                    if (activeJobStatus) {
-                        var coverageState = document.createElement('div');
-                        coverageState.className = 'jt-muted';
-                        coverageState.textContent = 'Coverage: ' + (item.statusLabel || statusLabel(item.status));
-                        statusCell.appendChild(coverageState);
-                    }
                     appendCell(row, item.expectedWidths.length ? item.expectedWidths.join(', ') + ' px' : '-', 'jt-widths jt-hide-small');
                     appendCell(row, item.resolutions.length ? item.resolutions.map(function (value) { return value.width; }).join(', ') + ' px' : '-', 'jt-widths');
                     appendCell(row, item.resolutions.reduce(function (sum, value) { return sum + value.thumbnailCount; }, 0), 'jt-hide-small');
-                    var actionCell = appendCell(row, '', 'jt-actions');
+                    var actionCell = appendCell(row, '', 'jt-actions jt-item-actions');
+                    var hasAction = false;
+                    if (item.resolutions.length) {
+                        var previewButton = document.createElement('button');
+                        previewButton.setAttribute('is', 'emby-button');
+                        previewButton.type = 'button';
+                        previewButton.className = 'raised btnPreviewTrickplay';
+                        previewButton.dataset.itemId = item.id;
+                        previewButton.textContent = 'Preview';
+                        actionCell.appendChild(previewButton);
+                        hasAction = true;
+                    }
                     var canGenerate = item.eligible
                         && item.libraryEnabled
                         && (item.status === 'Missing' || item.status === 'Partial');
@@ -435,7 +659,9 @@
                             : 'Generate missing';
                         generateButton.disabled = Boolean(activeJobStatus);
                         actionCell.appendChild(generateButton);
-                    } else {
+                        hasAction = true;
+                    }
+                    if (!hasAction) {
                         actionCell.textContent = '-';
                     }
                     body.appendChild(row);
@@ -509,6 +735,9 @@
                     result.items.forEach(function (job) {
                         var row = document.createElement('tr');
                         appendCell(row, job.itemName);
+                        var context = job.parentTitle || '';
+                        if (job.seasonName) { context += (context ? '\n' : '') + job.seasonName; }
+                        appendCell(row, context || '-', 'jt-context');
                         appendCell(row, job.libraryName);
                         var statusCell = appendCell(row, '');
                         var badge = document.createElement('span');
@@ -583,7 +812,11 @@
             }
 
             function clearHistory() {
-                if (!window.confirm('Clear all completed, failed, and cancelled job history? Active jobs will be preserved.')) {
+                var confirmation = 'Clear all completed, failed, and cancelled job history? Active jobs will be preserved.';
+                if (preserveCompletedCount) {
+                    confirmation += ' The completed total will also be preserved.';
+                }
+                if (!window.confirm(confirmation)) {
                     return;
                 }
 
@@ -598,7 +831,10 @@
             function renderSettings(settings) {
                 byId('historyRetentionDays').value = settings.jobHistoryRetentionDays;
                 byId('maximumRetainedJobs').value = settings.maximumRetainedJobs;
+                byId('preserveCompletedCount').checked = settings.preserveCompletedCount;
                 byId('maximumBatchSize').value = settings.maximumBatchSize;
+                preserveCompletedCount = settings.preserveCompletedCount;
+                byId('completedJobsLabel').textContent = preserveCompletedCount ? 'Completed total' : 'Completed retained';
                 jobListLimit = settings.maximumRetainedJobs;
             }
 
@@ -615,6 +851,7 @@
                 var settings = {
                     jobHistoryRetentionDays: Number(byId('historyRetentionDays').value),
                     maximumRetainedJobs: Number(byId('maximumRetainedJobs').value),
+                    preserveCompletedCount: byId('preserveCompletedCount').checked,
                     maximumBatchSize: Number(byId('maximumBatchSize').value)
                 };
                 setMessage('Saving JellyTPM settings...', false);
@@ -685,8 +922,28 @@
                     });
                 });
                 byId('itemRows').addEventListener('click', function (event) {
+                    var previewButton = event.target.closest('.btnPreviewTrickplay');
+                    if (previewButton && currentItemResult) {
+                        var previewItem = currentItemResult.items.find(function (item) {
+                            return String(item.id) === previewButton.dataset.itemId;
+                        });
+                        openPreview(previewItem, previewButton);
+                        return;
+                    }
                     var button = event.target.closest('.btnGenerateMissing');
                     if (button) { generateMissing(button); }
+                });
+                byId('closePreview').addEventListener('click', closePreview);
+                byId('previewResolution').addEventListener('change', configurePreviewResolution);
+                byId('previewPosition').addEventListener('input', schedulePreviewFrame);
+                byId('previewModal').addEventListener('click', function (event) {
+                    if (event.target === byId('previewModal')) { closePreview(); }
+                });
+                page.addEventListener('keydown', function (event) {
+                    if (event.key === 'Escape' && previewState) {
+                        event.preventDefault();
+                        closePreview();
+                    }
                 });
                 byId('jobRows').addEventListener('click', function (event) {
                     var button = event.target.closest('.btnCancelJob');
@@ -714,6 +971,7 @@
             });
 
             page.addEventListener('viewhide', function () {
+                if (previewState) { closePreview(); }
                 if (jobPollTimer) {
                     clearInterval(jobPollTimer);
                     jobPollTimer = null;

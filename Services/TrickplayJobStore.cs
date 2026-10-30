@@ -16,7 +16,7 @@ public sealed class TrickplayJobStore
 
     private readonly ILogger<TrickplayJobStore> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private List<TrickplayJob>? _jobs;
+    private JobStoreState? _state;
 
     /// <summary>Initializes a new instance of the <see cref="TrickplayJobStore"/> class.</summary>
     public TrickplayJobStore(ILogger<TrickplayJobStore> logger)
@@ -32,7 +32,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var existing = jobs.FirstOrDefault(job =>
                 job.ItemId == item.Id
                 && job.Operation == TrickplayJobOperation.GenerateMissing
@@ -47,6 +48,8 @@ public sealed class TrickplayJobStore
                 Id = Guid.NewGuid(),
                 ItemId = item.Id,
                 ItemName = item.Name,
+                ParentTitle = item.ParentTitle,
+                SeasonName = item.SeasonName,
                 LibraryId = item.LibraryId,
                 LibraryName = item.LibraryName,
                 Operation = TrickplayJobOperation.GenerateMissing,
@@ -55,7 +58,8 @@ public sealed class TrickplayJobStore
             };
             jobs.Add(job);
             PruneLocked(jobs);
-            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            SynchronizeCompletedTotalIfNeeded(state);
+            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return new TrickplayEnqueueResult { Job = Copy(job), Created = true };
         }
         finally
@@ -72,7 +76,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var activeItemIds = jobs
                 .Where(job => job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating)
                 .Select(job => job.ItemId)
@@ -92,6 +97,8 @@ public sealed class TrickplayJobStore
                     Id = Guid.NewGuid(),
                     ItemId = item.Id,
                     ItemName = item.Name,
+                    ParentTitle = item.ParentTitle,
+                    SeasonName = item.SeasonName,
                     LibraryId = item.LibraryId,
                     LibraryName = item.LibraryName,
                     Operation = TrickplayJobOperation.GenerateMissing,
@@ -102,7 +109,8 @@ public sealed class TrickplayJobStore
             }
 
             PruneLocked(jobs);
-            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            SynchronizeCompletedTotalIfNeeded(state);
+            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return (queuedItems, alreadyActiveItems);
         }
         finally
@@ -120,12 +128,14 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var countBeforePrune = jobs.Count;
             PruneLocked(jobs);
-            if (jobs.Count != countBeforePrune)
+            var completedTotalChanged = SynchronizeCompletedTotalIfNeeded(state);
+            if (jobs.Count != countBeforePrune || completedTotalChanged)
             {
-                await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
             var ordered = jobs
@@ -153,7 +163,9 @@ public sealed class TrickplayJobStore
                 {
                     Queued = ordered.Count(job => job.Status == TrickplayJobStatus.Queued),
                     Generating = ordered.Count(job => job.Status == TrickplayJobStatus.Generating),
-                    Completed = ordered.Count(job => job.Status == TrickplayJobStatus.Completed),
+                    Completed = (Plugin.Instance?.Configuration.PreserveCompletedCount ?? true)
+                        ? state.TotalCompleted
+                        : ordered.Count(job => job.Status == TrickplayJobStatus.Completed),
                     Failed = ordered.Count(job => job.Status == TrickplayJobStatus.Failed),
                     Cancelled = ordered.Count(job => job.Status == TrickplayJobStatus.Cancelled)
                 }
@@ -171,7 +183,7 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = (await LoadLockedAsync(cancellationToken).ConfigureAwait(false)).Jobs;
             var job = jobs.FirstOrDefault(value => value.Id == jobId);
             return job is null ? null : Copy(job);
         }
@@ -187,7 +199,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var job = jobs
                 .Where(value => value.Status == TrickplayJobStatus.Queued)
                 .OrderBy(value => value.QueuedAtUtc)
@@ -202,7 +215,7 @@ public sealed class TrickplayJobStore
             job.FinishedAtUtc = null;
             job.AttemptCount++;
             job.ErrorMessage = string.Empty;
-            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return Copy(job);
         }
         finally
@@ -229,7 +242,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var job = jobs.FirstOrDefault(value => value.Id == jobId);
             if (job?.Status != TrickplayJobStatus.Queued)
             {
@@ -238,7 +252,7 @@ public sealed class TrickplayJobStore
 
             job.Status = TrickplayJobStatus.Cancelled;
             job.FinishedAtUtc = DateTime.UtcNow;
-            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return true;
         }
         finally
@@ -253,11 +267,13 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var removed = jobs.RemoveAll(IsTerminal);
-            if (removed > 0)
+            var completedTotalChanged = SynchronizeCompletedTotalIfNeeded(state);
+            if (removed > 0 || completedTotalChanged)
             {
-                await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
             return removed;
@@ -274,7 +290,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var interrupted = jobs.Where(job => job.Status == TrickplayJobStatus.Generating).ToArray();
             foreach (var job in interrupted)
             {
@@ -285,7 +302,7 @@ public sealed class TrickplayJobStore
 
             if (interrupted.Length > 0)
             {
-                await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
             return interrupted.Length;
@@ -305,14 +322,21 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
             var job = jobs.FirstOrDefault(value => value.Id == jobId)
                 ?? throw new InvalidOperationException("The generation job no longer exists.");
             job.Status = status;
             job.FinishedAtUtc = DateTime.UtcNow;
             job.ErrorMessage = errorMessage;
+            if (status == TrickplayJobStatus.Completed)
+            {
+                state.TotalCompleted++;
+            }
+
             PruneLocked(jobs);
-            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            SynchronizeCompletedTotalIfNeeded(state);
+            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -320,18 +344,18 @@ public sealed class TrickplayJobStore
         }
     }
 
-    private async Task<List<TrickplayJob>> LoadLockedAsync(CancellationToken cancellationToken)
+    private async Task<JobStoreState> LoadLockedAsync(CancellationToken cancellationToken)
     {
-        if (_jobs is not null)
+        if (_state is not null)
         {
-            return _jobs;
+            return _state;
         }
 
         var path = GetStorePath();
         if (!File.Exists(path))
         {
-            _jobs = [];
-            return _jobs;
+            _state = new JobStoreState();
+            return _state;
         }
 
         try
@@ -343,11 +367,24 @@ public sealed class TrickplayJobStore
                 FileShare.Read,
                 4096,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            _jobs = await JsonSerializer.DeserializeAsync<List<TrickplayJob>>(
-                stream,
-                SerializerOptions,
-                cancellationToken).ConfigureAwait(false) ?? [];
-            return _jobs;
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var legacyJobs = document.RootElement.Deserialize<List<TrickplayJob>>(SerializerOptions) ?? [];
+                _state = new JobStoreState
+                {
+                    Jobs = legacyJobs,
+                    TotalCompleted = legacyJobs.Count(job => job.Status == TrickplayJobStatus.Completed)
+                };
+            }
+            else
+            {
+                _state = document.RootElement.Deserialize<JobStoreState>(SerializerOptions) ?? new JobStoreState();
+                _state.Jobs ??= [];
+            }
+
+            return _state;
         }
         catch (JsonException exception)
         {
@@ -356,7 +393,7 @@ public sealed class TrickplayJobStore
         }
     }
 
-    private async Task SaveLockedAsync(List<TrickplayJob> jobs, CancellationToken cancellationToken)
+    private async Task SaveLockedAsync(JobStoreState state, CancellationToken cancellationToken)
     {
         var path = GetStorePath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -371,7 +408,7 @@ public sealed class TrickplayJobStore
                              4096,
                              FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await JsonSerializer.SerializeAsync(stream, jobs, SerializerOptions, cancellationToken)
+                await JsonSerializer.SerializeAsync(stream, state, SerializerOptions, cancellationToken)
                     .ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -415,6 +452,23 @@ public sealed class TrickplayJobStore
             or TrickplayJobStatus.Cancelled;
     }
 
+    private static bool SynchronizeCompletedTotalIfNeeded(JobStoreState state)
+    {
+        if (Plugin.Instance?.Configuration.PreserveCompletedCount ?? true)
+        {
+            return false;
+        }
+
+        var retainedCompleted = state.Jobs.Count(job => job.Status == TrickplayJobStatus.Completed);
+        if (state.TotalCompleted == retainedCompleted)
+        {
+            return false;
+        }
+
+        state.TotalCompleted = retainedCompleted;
+        return true;
+    }
+
     private static string SanitizeError(string message)
     {
         if (string.IsNullOrWhiteSpace(message))
@@ -434,6 +488,8 @@ public sealed class TrickplayJobStore
             Id = job.Id,
             ItemId = job.ItemId,
             ItemName = job.ItemName,
+            ParentTitle = job.ParentTitle,
+            SeasonName = job.SeasonName,
             LibraryId = job.LibraryId,
             LibraryName = job.LibraryName,
             Operation = job.Operation,
@@ -450,5 +506,12 @@ public sealed class TrickplayJobStore
     {
         return Plugin.Instance?.GetDataFilePath(StoreFileName)
             ?? throw new InvalidOperationException("JellyTPM is not initialized.");
+    }
+
+    private sealed class JobStoreState
+    {
+        public List<TrickplayJob> Jobs { get; set; } = [];
+
+        public int TotalCompleted { get; set; }
     }
 }

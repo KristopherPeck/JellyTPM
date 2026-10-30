@@ -33,6 +33,11 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     public int MaximumRetainedJobs { get; set; } = 50;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the completed total survives history pruning and clearing.
+    /// </summary>
+    public bool PreserveCompletedCount { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the maximum number of candidates accepted by one filtered batch request.
     /// </summary>
     public int MaximumBatchSize { get; set; } = 500;

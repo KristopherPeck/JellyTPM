@@ -22,6 +22,7 @@ Implemented:
 - Available, partial, missing, disabled, and ineligible item states
 - Server-paged title inventory with library, status, and search filters
 - Expected and available resolution reporting
+- Interactive trickplay frame previews with resolution selection and timeline scrubbing
 - Short-lived server-side inventory snapshots
 - Administrator-only API routes
 - Embedded Jellyfin dashboard without Node.js or a frontend build toolchain
@@ -31,7 +32,8 @@ Implemented:
 - Filtered batch generation with a configurable per-request safety limit
 - Combined show-and-season search using Jellyfin's actual season names
 - Configurable history age and count limits, with active jobs excluded from pruning
-- Clear-history controls and queue-state-aware dashboard styling
+- Clear-history controls with an optional persistent completed-job total
+- Queue-state-aware dashboard styling and show/season context in queue rows
 - Separate Coverage, Generation Queue, and Settings tabs
 
 Planned:
@@ -54,11 +56,13 @@ JellyTPM does not report a numeric percentage for the active FFmpeg operation be
 
 Generate missing uses Jellyfin's non-replacement operation. A job is marked Completed only after JellyTPM confirms that every expected resolution exists. Queue and history records are stored in the plugin data directory and completed records are retained for 30 days by default.
 
-Terminal history is limited to 50 records by default. Queued and generating jobs never count against that limit. Filtered batch generation has a separate default maximum of 500 candidates per request, so queue safety and history retention remain independent.
+Terminal history is limited to 50 records by default. Queued and generating jobs never count against that limit. The completed-job total is preserved when detailed history expires or is cleared by default; administrators can instead configure it to reflect only retained records. Filtered batch generation has a separate default maximum of 500 candidates per request, so queue safety and history retention remain independent.
 
 Synthetic Collections/BoxSets views are excluded because they reference videos from physical source libraries and would otherwise duplicate inventory rows. Music, book, and zero-video libraries are omitted because they are outside the scope of native video trickplay. Disabled video libraries show coverage as `N/A` rather than implying that generation failed.
 
 Episode rows include their television series and season. Extra rows include their owning movie or episode context when Jellyfin exposes that ownership relationship.
+
+Items with at least one available trickplay resolution include a Preview action. JellyTPM retrieves the authenticated Jellyfin tile containing the selected timestamp and renders only that frame; it does not read media paths or transcode the source video.
 
 An item can normally be Partial only when multiple effective trickplay widths are configured and some, but not all, are available.
 

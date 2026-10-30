@@ -38,6 +38,12 @@ public sealed class TrickplayJob
     /// <summary>Gets or sets the safe item display name captured when queued.</summary>
     public string ItemName { get; set; } = string.Empty;
 
+    /// <summary>Gets or sets the owning movie or television series title captured when queued.</summary>
+    public string ParentTitle { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the television season name captured when queued.</summary>
+    public string SeasonName { get; set; } = string.Empty;
+
     /// <summary>Gets or sets the containing library identifier captured when queued.</summary>
     public Guid LibraryId { get; set; }
 
@@ -107,7 +113,7 @@ public sealed class TrickplayJobCounts
     /// <summary>Gets or sets the number of generating jobs.</summary>
     public int Generating { get; set; }
 
-    /// <summary>Gets or sets the number of completed jobs in retained history.</summary>
+    /// <summary>Gets or sets the completed job total, either lifetime or retained according to settings.</summary>
     public int Completed { get; set; }
 
     /// <summary>Gets or sets the number of failed jobs in retained history.</summary>
@@ -147,6 +153,9 @@ public sealed class JellyTPMSettings
 
     /// <summary>Gets or sets the maximum number of terminal history records retained and displayed.</summary>
     public int MaximumRetainedJobs { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the completed total survives history removal.</summary>
+    public bool PreserveCompletedCount { get; set; }
 
     /// <summary>Gets or sets the maximum number of candidates accepted by one filtered batch.</summary>
     public int MaximumBatchSize { get; set; }

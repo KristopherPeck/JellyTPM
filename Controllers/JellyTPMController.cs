@@ -181,6 +181,7 @@ public sealed class JellyTPMController : ControllerBase
         {
             JobHistoryRetentionDays = configuration.JobHistoryRetentionDays,
             MaximumRetainedJobs = configuration.MaximumRetainedJobs,
+            PreserveCompletedCount = configuration.PreserveCompletedCount,
             MaximumBatchSize = configuration.MaximumBatchSize
         });
     }
@@ -211,6 +212,7 @@ public sealed class JellyTPMController : ControllerBase
         var configuration = plugin.Configuration;
         configuration.JobHistoryRetentionDays = settings.JobHistoryRetentionDays;
         configuration.MaximumRetainedJobs = settings.MaximumRetainedJobs;
+        configuration.PreserveCompletedCount = settings.PreserveCompletedCount;
         configuration.MaximumBatchSize = settings.MaximumBatchSize;
         plugin.UpdateConfiguration(configuration);
         return Ok(settings);
