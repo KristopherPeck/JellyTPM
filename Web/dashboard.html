@@ -290,6 +290,8 @@
             var previewState = null;
             var previewRequestId = 0;
             var previewRenderTimer = null;
+            var jobRequestSequence = 0;
+            var lastRenderedJobRequest = 0;
 
             function byId(id) { return page.querySelector('#' + id); }
 
@@ -724,12 +726,11 @@
                 result.activeJobs.forEach(function (job) {
                     activeJobStates[String(job.itemId).toLowerCase()] = job.status;
                 });
+                byId('queuedJobs').textContent = result.counts.queued;
+                byId('generatingJobs').textContent = result.counts.generating;
+                byId('completedJobs').textContent = result.counts.completed;
+                byId('failedJobs').textContent = result.counts.failed;
                 if (renderHistory) {
-                    byId('queuedJobs').textContent = result.counts.queued;
-                    byId('generatingJobs').textContent = result.counts.generating;
-                    byId('completedJobs').textContent = result.counts.completed;
-                    byId('failedJobs').textContent = result.counts.failed;
-
                     var body = byId('jobRows');
                     body.textContent = '';
                     result.items.forEach(function (job) {
@@ -769,18 +770,25 @@
                 var activeJobFinished = Object.keys(previousActiveJobStates).some(function (itemId) {
                     return !activeJobStates[itemId];
                 });
+                if (currentItemResult) {
+                    renderItems(currentItemResult);
+                }
                 if (activeJobFinished) {
                     loadAll(false);
-                } else if (currentItemResult) {
-                    renderItems(currentItemResult);
                 }
             }
 
             function loadJobs(showErrors, renderHistory) {
                 if (renderHistory == null) { renderHistory = activeTab === 'queue'; }
-                return api('Jobs?startIndex=0&limit=' + encodeURIComponent(jobListLimit)).then(function (result) {
+                var requestSequence = ++jobRequestSequence;
+                var path = 'Jobs?startIndex=0&limit=' + encodeURIComponent(jobListLimit)
+                    + '&_=' + encodeURIComponent(Date.now());
+                return api(path).then(function (result) {
+                    if (requestSequence < lastRenderedJobRequest) { return; }
+                    lastRenderedJobRequest = requestSequence;
                     renderJobs(result, renderHistory);
                 }).catch(function (error) {
+                    if (requestSequence < lastRenderedJobRequest) { return; }
                     if (showErrors) { reportError('Unable to load the generation queue', error); }
                     else { console.error('JellyTPM job refresh failed', error); }
                 });

@@ -42,4 +42,5 @@ All notable changes to JellyTPM will be documented in this file.
 - Renamed the Jellyfin sidebar entry from Trickplay Dashboard to JellyTPM.
 - Replaced the inventory coverage sublabel with the active queue state to prevent status-cell resizing.
 - Compacted the coverage filters and kept a manual inventory refresh in the same toolbar.
+- Prevented stale or cached queue polls from leaving Queued and Generating counts or item states behind completed work.
 
