@@ -101,13 +101,34 @@ public sealed class JellyTPMController : ControllerBase
         }
     }
 
+    /// <summary>Queues Missing and Partial videos matching the current dashboard filters.</summary>
+    [HttpPost("Items/GenerateFiltered")]
+    [ProducesResponseType<TrickplayBatchEnqueueResult>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<TrickplayBatchEnqueueResult>> GenerateFiltered(
+        [FromQuery] Guid? libraryId,
+        [FromQuery] TrickplayInventoryStatus? status,
+        [FromQuery] string? search,
+        CancellationToken cancellationToken)
+    {
+        if (search?.Length > 200)
+        {
+            return BadRequest("Search text cannot exceed 200 characters.");
+        }
+
+        var result = await _queueService
+            .EnqueueFilteredAsync(libraryId, status, search, cancellationToken)
+            .ConfigureAwait(false);
+        return Accepted(result);
+    }
+
     /// <summary>Gets the durable generation queue and retained history.</summary>
     [HttpGet("Jobs")]
     [ProducesResponseType<TrickplayJobPage>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TrickplayJobPage>> GetJobs(
         [FromQuery] int startIndex = 0,
-        [FromQuery] int limit = 25,
+        [FromQuery] int limit = 50,
         CancellationToken cancellationToken = default)
     {
         if (startIndex < 0)
@@ -137,6 +158,62 @@ public sealed class JellyTPMController : ControllerBase
         }
 
         return NoContent();
+    }
+
+    /// <summary>Clears completed, failed, and cancelled history without touching active jobs.</summary>
+    [HttpDelete("Jobs/History")]
+    [ProducesResponseType<TrickplayHistoryClearResult>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<TrickplayHistoryClearResult>> ClearJobHistory(
+        CancellationToken cancellationToken)
+    {
+        var removed = await _queueService.ClearHistoryAsync(cancellationToken).ConfigureAwait(false);
+        return Ok(new TrickplayHistoryClearResult { RemovedItems = removed });
+    }
+
+    /// <summary>Gets administrator-editable queue and history settings.</summary>
+    [HttpGet("Settings")]
+    [ProducesResponseType<JellyTPMSettings>(StatusCodes.Status200OK)]
+    public ActionResult<JellyTPMSettings> GetSettings()
+    {
+        var configuration = Plugin.Instance?.Configuration
+            ?? throw new InvalidOperationException("JellyTPM is not initialized.");
+        return Ok(new JellyTPMSettings
+        {
+            JobHistoryRetentionDays = configuration.JobHistoryRetentionDays,
+            MaximumRetainedJobs = configuration.MaximumRetainedJobs,
+            MaximumBatchSize = configuration.MaximumBatchSize
+        });
+    }
+
+    /// <summary>Validates and saves administrator-editable queue and history settings.</summary>
+    [HttpPut("Settings")]
+    [ProducesResponseType<JellyTPMSettings>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public ActionResult<JellyTPMSettings> UpdateSettings([FromBody] JellyTPMSettings settings)
+    {
+        if (settings.JobHistoryRetentionDays is < 1 or > 365)
+        {
+            return BadRequest("History retention must be between 1 and 365 days.");
+        }
+
+        if (settings.MaximumRetainedJobs is < 1 or > 500)
+        {
+            return BadRequest("Maximum retained jobs must be between 1 and 500.");
+        }
+
+        if (settings.MaximumBatchSize is < 1 or > 5000)
+        {
+            return BadRequest("Maximum batch size must be between 1 and 5000.");
+        }
+
+        var plugin = Plugin.Instance
+            ?? throw new InvalidOperationException("JellyTPM is not initialized.");
+        var configuration = plugin.Configuration;
+        configuration.JobHistoryRetentionDays = settings.JobHistoryRetentionDays;
+        configuration.MaximumRetainedJobs = settings.MaximumRetainedJobs;
+        configuration.MaximumBatchSize = settings.MaximumBatchSize;
+        plugin.UpdateConfiguration(configuration);
+        return Ok(settings);
     }
 }
 

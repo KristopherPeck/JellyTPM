@@ -26,5 +26,15 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the number of days completed generation history is retained.
     /// </summary>
     public int JobHistoryRetentionDays { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets the maximum number of terminal generation jobs retained.
+    /// </summary>
+    public int MaximumRetainedJobs { get; set; } = 50;
+
+    /// <summary>
+    /// Gets or sets the maximum number of candidates accepted by one filtered batch request.
+    /// </summary>
+    public int MaximumBatchSize { get; set; } = 500;
 }
 

@@ -62,7 +62,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "JellyTPM",
-                DisplayName = "Trickplay Dashboard",
+                DisplayName = "JellyTPM",
                 MenuIcon = "image_search",
                 EnableInMainMenu = true,
                 EmbeddedResourcePath = string.Format(

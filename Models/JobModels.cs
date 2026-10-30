@@ -76,6 +76,28 @@ public sealed class TrickplayEnqueueResult
     public bool Created { get; set; }
 }
 
+/// <summary>Summarizes a filtered batch enqueue request.</summary>
+public sealed class TrickplayBatchEnqueueResult
+{
+    /// <summary>Gets or sets the number of inventory rows matching the submitted filters.</summary>
+    public int MatchingItems { get; set; }
+
+    /// <summary>Gets or sets the number of matching Missing or Partial items eligible for generation.</summary>
+    public int CandidateItems { get; set; }
+
+    /// <summary>Gets or sets the number of new durable jobs created.</summary>
+    public int QueuedItems { get; set; }
+
+    /// <summary>Gets or sets the number of candidates already queued or generating.</summary>
+    public int AlreadyActiveItems { get; set; }
+
+    /// <summary>Gets or sets the configured maximum candidates accepted by one batch.</summary>
+    public int BatchLimit { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether candidates exceeded the batch limit.</summary>
+    public bool Truncated { get; set; }
+}
+
 /// <summary>Counts the current durable queue and history states.</summary>
 public sealed class TrickplayJobCounts
 {
@@ -110,9 +132,29 @@ public sealed class TrickplayJobPage
     /// <summary>Gets or sets the bounded page size.</summary>
     public int PageSize { get; set; }
 
-    /// <summary>Gets or sets every item identifier with a queued or generating job.</summary>
-    public Guid[] ActiveItemIds { get; set; } = [];
+    /// <summary>Gets or sets every queued or generating job, regardless of paging.</summary>
+    public TrickplayJob[] ActiveJobs { get; set; } = [];
 
     /// <summary>Gets or sets aggregate counts before paging.</summary>
     public TrickplayJobCounts Counts { get; set; } = new();
+}
+
+/// <summary>Administrator-editable JellyTPM behavior settings.</summary>
+public sealed class JellyTPMSettings
+{
+    /// <summary>Gets or sets the completed job-history retention period in days.</summary>
+    public int JobHistoryRetentionDays { get; set; }
+
+    /// <summary>Gets or sets the maximum number of terminal history records retained and displayed.</summary>
+    public int MaximumRetainedJobs { get; set; }
+
+    /// <summary>Gets or sets the maximum number of candidates accepted by one filtered batch.</summary>
+    public int MaximumBatchSize { get; set; }
+}
+
+/// <summary>Summarizes a terminal-history clear operation.</summary>
+public sealed class TrickplayHistoryClearResult
+{
+    /// <summary>Gets or sets the number of terminal records removed.</summary>
+    public int RemovedItems { get; set; }
 }

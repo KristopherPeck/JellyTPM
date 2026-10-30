@@ -5,6 +5,7 @@
     "description": "Audit native trickplay coverage and manage generation by library and item.",
     "overview": "Jellyfin Trickplay Manager",
     "owner": "KristopherPeck",
+    "imageUrl": "https://raw.githubusercontent.com/KristopherPeck/JellyTPM/main/assets/title-cards/jellytpm-repository-16x9.png",
     "category": "General",
     "versions": [
       {

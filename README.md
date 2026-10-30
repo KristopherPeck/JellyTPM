@@ -2,6 +2,8 @@
 
 > Jellyfin Trickplay Manager
 
+![JellyTPM trickplay coverage and generation dashboard](assets/title-cards/jellytpm-repository.png)
+
 JellyTPM gives Jellyfin administrators a per-library and per-item view of native trickplay coverage, with a durable queue for generating missing thumbnails and tracking verified results.
 
 ## Current status
@@ -21,10 +23,14 @@ Implemented:
 - Durable single-worker generation queue that recovers interrupted work after restart
 - Non-destructive Generate missing actions for Missing and Partial items
 - Post-generation resolution validation, retained job history, and queued-job cancellation
+- Filtered batch generation with a configurable per-request safety limit
+- Combined show-and-season search using Jellyfin's actual season names
+- Configurable history age and count limits, with active jobs excluded from pruning
+- Clear-history controls and queue-state-aware dashboard styling
+- Separate Coverage, Generation Queue, and Settings tabs
 
 Planned:
 
-- Generate missing by library
 - Explicit replacement regeneration
 - Retry failed jobs and request cancellation of active work
 - Native scheduled-task activity detection
@@ -42,6 +48,8 @@ Planned:
 JellyTPM does not report a numeric percentage for the active FFmpeg operation because Jellyfin does not expose reliable per-file trickplay progress through its plugin API.
 
 Generate missing uses Jellyfin's non-replacement operation. A job is marked Completed only after JellyTPM confirms that every expected resolution exists. Queue and history records are stored in the plugin data directory and completed records are retained for 30 days by default.
+
+Terminal history is limited to 50 records by default. Queued and generating jobs never count against that limit. Filtered batch generation has a separate default maximum of 500 candidates per request, so queue safety and history retention remain independent.
 
 Synthetic Collections/BoxSets views are excluded because they reference videos from physical source libraries and would otherwise duplicate inventory rows. Music, book, and zero-video libraries are omitted because they are outside the scope of native video trickplay. Disabled video libraries show coverage as `N/A` rather than implying that generation failed.
 

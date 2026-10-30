@@ -64,6 +64,53 @@ public sealed class TrickplayJobStore
         }
     }
 
+    /// <summary>Creates durable jobs for a bounded set and deduplicates active items.</summary>
+    internal async Task<(int QueuedItems, int AlreadyActiveItems)> EnqueueManyAsync(
+        IReadOnlyCollection<TrickplayItemSummary> items,
+        CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var activeItemIds = jobs
+                .Where(job => job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating)
+                .Select(job => job.ItemId)
+                .ToHashSet();
+            var queuedItems = 0;
+            var alreadyActiveItems = 0;
+            foreach (var item in items.GroupBy(value => value.Id).Select(group => group.First()))
+            {
+                if (!activeItemIds.Add(item.Id))
+                {
+                    alreadyActiveItems++;
+                    continue;
+                }
+
+                jobs.Add(new TrickplayJob
+                {
+                    Id = Guid.NewGuid(),
+                    ItemId = item.Id,
+                    ItemName = item.Name,
+                    LibraryId = item.LibraryId,
+                    LibraryName = item.LibraryName,
+                    Operation = TrickplayJobOperation.GenerateMissing,
+                    Status = TrickplayJobStatus.Queued,
+                    QueuedAtUtc = DateTime.UtcNow
+                });
+                queuedItems++;
+            }
+
+            PruneLocked(jobs);
+            await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            return (queuedItems, alreadyActiveItems);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     /// <summary>Returns a bounded page of newest-first jobs and aggregate counts.</summary>
     public async Task<TrickplayJobPage> GetJobsAsync(
         int startIndex,
@@ -81,19 +128,26 @@ public sealed class TrickplayJobStore
                 await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
             }
 
-            var ordered = jobs.OrderByDescending(job => job.QueuedAtUtc).ToArray();
+            var ordered = jobs
+                .Where(job => !IsTerminal(job))
+                .OrderBy(job => job.Status == TrickplayJobStatus.Generating ? 0 : 1)
+                .ThenBy(job => job.QueuedAtUtc)
+                .Concat(jobs
+                    .Where(IsTerminal)
+                    .OrderByDescending(job => job.FinishedAtUtc ?? job.QueuedAtUtc))
+                .ToArray();
             var boundedStart = Math.Max(0, startIndex);
-            var boundedLimit = Math.Clamp(limit, 1, 100);
+            var boundedLimit = Math.Clamp(limit, 1, 500);
             return new TrickplayJobPage
             {
                 Items = ordered.Skip(boundedStart).Take(boundedLimit).Select(Copy).ToArray(),
                 TotalCount = ordered.Length,
                 StartIndex = boundedStart,
                 PageSize = boundedLimit,
-                ActiveItemIds = ordered
+                ActiveJobs = ordered
                     .Where(job => job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating)
-                    .Select(job => job.ItemId)
-                    .Distinct()
+                    .GroupBy(job => job.ItemId)
+                    .Select(group => Copy(group.First()))
                     .ToArray(),
                 Counts = new TrickplayJobCounts
                 {
@@ -186,6 +240,27 @@ public sealed class TrickplayJobStore
             job.FinishedAtUtc = DateTime.UtcNow;
             await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
             return true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>Deletes retained terminal history without touching queued or generating jobs.</summary>
+    public async Task<int> ClearHistoryAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var jobs = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var removed = jobs.RemoveAll(IsTerminal);
+            if (removed > 0)
+            {
+                await SaveLockedAsync(jobs, cancellationToken).ConfigureAwait(false);
+            }
+
+            return removed;
         }
         finally
         {
@@ -317,8 +392,27 @@ public sealed class TrickplayJobStore
         var retentionDays = Math.Clamp(Plugin.Instance?.Configuration.JobHistoryRetentionDays ?? 30, 1, 365);
         var cutoff = DateTime.UtcNow.AddDays(-retentionDays);
         jobs.RemoveAll(job =>
-            (job.Status is TrickplayJobStatus.Completed or TrickplayJobStatus.Failed or TrickplayJobStatus.Cancelled)
+            IsTerminal(job)
             && job.FinishedAtUtc < cutoff);
+
+        var maximumRetained = Math.Clamp(Plugin.Instance?.Configuration.MaximumRetainedJobs ?? 50, 1, 500);
+        var excessHistoryIds = jobs
+            .Where(IsTerminal)
+            .OrderByDescending(job => job.FinishedAtUtc ?? job.QueuedAtUtc)
+            .Skip(maximumRetained)
+            .Select(job => job.Id)
+            .ToHashSet();
+        if (excessHistoryIds.Count > 0)
+        {
+            jobs.RemoveAll(job => excessHistoryIds.Contains(job.Id));
+        }
+    }
+
+    private static bool IsTerminal(TrickplayJob job)
+    {
+        return job.Status is TrickplayJobStatus.Completed
+            or TrickplayJobStatus.Failed
+            or TrickplayJobStatus.Cancelled;
     }
 
     private static string SanitizeError(string message)

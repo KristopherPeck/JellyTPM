@@ -63,28 +63,7 @@ public sealed class TrickplayInventoryService
         CancellationToken cancellationToken)
     {
         var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
-        var normalizedSearch = search?.Trim();
-        var query = snapshot.Items.AsEnumerable();
-
-        if (libraryId.HasValue)
-        {
-            query = query.Where(item => item.LibraryId == libraryId.Value);
-        }
-
-        if (status.HasValue)
-        {
-            query = query.Where(item => item.Status == status.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(normalizedSearch))
-        {
-            query = query.Where(item =>
-                item.Name.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)
-                || item.ParentTitle.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)
-                || item.SeasonName.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase));
-        }
-
-        var matching = query
+        var matching = ApplyFilters(snapshot.Items, libraryId, status, search)
             .OrderBy(item => item.LibraryName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Year)
@@ -102,6 +81,23 @@ public sealed class TrickplayInventoryService
         };
     }
 
+    /// <summary>Gets every inventory row matching server-side dashboard filters.</summary>
+    public async Task<TrickplayItemSummary[]> GetMatchingItemsAsync(
+        Guid? libraryId,
+        TrickplayInventoryStatus? status,
+        string? search,
+        bool refresh,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
+        return ApplyFilters(snapshot.Items, libraryId, status, search)
+            .OrderBy(item => item.LibraryName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.ParentTitle, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.SeasonName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     /// <summary>Gets one current inventory row by Jellyfin item identifier.</summary>
     public async Task<TrickplayItemSummary?> GetItemAsync(
         Guid itemId,
@@ -116,6 +112,42 @@ public sealed class TrickplayInventoryService
     public void Invalidate()
     {
         _snapshot = null;
+    }
+
+    private static IEnumerable<TrickplayItemSummary> ApplyFilters(
+        IEnumerable<TrickplayItemSummary> items,
+        Guid? libraryId,
+        TrickplayInventoryStatus? status,
+        string? search)
+    {
+        var query = items;
+        if (libraryId.HasValue)
+        {
+            query = query.Where(item => item.LibraryId == libraryId.Value);
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(item => item.Status == status.Value);
+        }
+
+        var normalizedSearch = search?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedSearch))
+        {
+            query = query.Where(item =>
+            {
+                var combinedContext = string.Join(
+                    " ",
+                    new[] { item.ParentTitle, item.SeasonName, item.Name }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)));
+                return item.Name.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)
+                    || item.ParentTitle.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)
+                    || item.SeasonName.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)
+                    || combinedContext.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        return query;
     }
 
     private async Task<InventorySnapshot> GetSnapshotAsync(

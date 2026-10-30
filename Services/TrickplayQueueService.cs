@@ -57,6 +57,41 @@ public sealed class TrickplayQueueService : BackgroundService
         return result;
     }
 
+    /// <summary>Queues actionable Missing and Partial items from the current server-side filters.</summary>
+    public async Task<TrickplayBatchEnqueueResult> EnqueueFilteredAsync(
+        Guid? libraryId,
+        TrickplayInventoryStatus? status,
+        string? search,
+        CancellationToken cancellationToken)
+    {
+        var matching = await _inventoryService
+            .GetMatchingItemsAsync(libraryId, status, search, true, cancellationToken)
+            .ConfigureAwait(false);
+        var candidates = matching
+            .Where(item =>
+                item.Eligible
+                && item.LibraryEnabled
+                && item.Status is TrickplayInventoryStatus.Missing or TrickplayInventoryStatus.Partial)
+            .ToArray();
+        var batchLimit = Math.Clamp(Plugin.Instance?.Configuration.MaximumBatchSize ?? 500, 1, 5000);
+        var selected = candidates.Take(batchLimit).ToArray();
+        var enqueueResult = await _jobStore.EnqueueManyAsync(selected, cancellationToken).ConfigureAwait(false);
+        if (enqueueResult.QueuedItems > 0)
+        {
+            WakeWorker();
+        }
+
+        return new TrickplayBatchEnqueueResult
+        {
+            MatchingItems = matching.Length,
+            CandidateItems = candidates.Length,
+            QueuedItems = enqueueResult.QueuedItems,
+            AlreadyActiveItems = enqueueResult.AlreadyActiveItems,
+            BatchLimit = batchLimit,
+            Truncated = candidates.Length > batchLimit
+        };
+    }
+
     /// <summary>Gets a bounded page of queue and history records.</summary>
     public Task<TrickplayJobPage> GetJobsAsync(
         int startIndex,
@@ -76,6 +111,12 @@ public sealed class TrickplayQueueService : BackgroundService
     public Task<TrickplayJob?> GetJobAsync(Guid jobId, CancellationToken cancellationToken)
     {
         return _jobStore.GetJobAsync(jobId, cancellationToken);
+    }
+
+    /// <summary>Clears terminal queue history while preserving all active jobs.</summary>
+    public Task<int> ClearHistoryAsync(CancellationToken cancellationToken)
+    {
+        return _jobStore.ClearHistoryAsync(cancellationToken);
     }
 
     /// <inheritdoc />
