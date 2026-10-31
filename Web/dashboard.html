@@ -304,6 +304,8 @@
             var previewRenderTimer = null;
             var jobRequestSequence = 0;
             var lastRenderedJobRequest = 0;
+            var inventoryPollTimer = null;
+            var inventoryAwaitingRefresh = false;
 
             function byId(id) { return page.querySelector('#' + id); }
 
@@ -390,6 +392,113 @@
                 var target = byId('globalMessage');
                 target.textContent = message || '';
                 target.classList.toggle('error', Boolean(isError));
+            }
+
+            function stopInventoryPolling() {
+                if (inventoryPollTimer) {
+                    clearInterval(inventoryPollTimer);
+                    inventoryPollTimer = null;
+                }
+            }
+
+            function ensureInventoryPolling() {
+                if (!inventoryPollTimer) {
+                    inventoryPollTimer = setInterval(pollInventoryRefresh, 5000);
+                }
+            }
+
+            function showInventoryRefreshStatus(status) {
+                var button = byId('refreshInventory');
+                button.disabled = Boolean(status.isRefreshing);
+                button.textContent = status.isRefreshing ? 'Refreshing...' : 'Refresh';
+                if (status.isRefreshing) {
+                    var message = 'Inventory refresh is running on the Jellyfin server. You can leave this page and return later.';
+                    if (status.hasSnapshot) {
+                        message += ' The previous completed snapshot remains available while it runs.';
+                    }
+                    setMessage(message, false);
+                }
+            }
+
+            function pollInventoryRefresh() {
+                return api('Refresh?_=' + encodeURIComponent(Date.now())).then(function (status) {
+                    showInventoryRefreshStatus(status);
+                    if (status.isRefreshing) {
+                        inventoryAwaitingRefresh = true;
+                        ensureInventoryPolling();
+                        return null;
+                    }
+
+                    stopInventoryPolling();
+                    if (status.errorMessage) {
+                        inventoryAwaitingRefresh = false;
+                        setMessage(status.errorMessage, true);
+                        return null;
+                    }
+
+                    if (inventoryAwaitingRefresh && status.hasSnapshot) {
+                        inventoryAwaitingRefresh = false;
+                        return loadAll().then(function () {
+                            setMessage(
+                                status.isSnapshotStale
+                                    ? 'Inventory refresh completed, but newer changes still require reconciliation.'
+                                    : 'Inventory refresh completed.',
+                                false);
+                        });
+                    }
+
+                    return null;
+                }).catch(function (error) {
+                    console.error('JellyTPM inventory refresh poll failed', error);
+                });
+            }
+
+            function startInventoryRefresh() {
+                inventoryAwaitingRefresh = true;
+                byId('refreshInventory').disabled = true;
+                setMessage('Starting server-side inventory refresh...', false);
+                return apiRequest('Refresh', 'POST').then(function (status) {
+                    showInventoryRefreshStatus(status);
+                    if (status.isRefreshing) {
+                        ensureInventoryPolling();
+                        return null;
+                    }
+
+                    return pollInventoryRefresh();
+                }).catch(function (error) {
+                    inventoryAwaitingRefresh = false;
+                    byId('refreshInventory').disabled = false;
+                    reportError('Unable to start the inventory refresh', error);
+                });
+            }
+
+            function loadInventoryDashboard() {
+                return api('Refresh?_=' + encodeURIComponent(Date.now())).then(function (status) {
+                    var loadSnapshot = status.hasSnapshot ? loadAll() : Promise.resolve();
+                    return loadSnapshot.then(function () {
+                        if (status.isRefreshing) {
+                            inventoryAwaitingRefresh = true;
+                            showInventoryRefreshStatus(status);
+                            ensureInventoryPolling();
+                            return null;
+                        }
+
+                        if (status.errorMessage) {
+                            showInventoryRefreshStatus(status);
+                            setMessage(status.errorMessage, true);
+                            return null;
+                        }
+
+                        if (!status.hasSnapshot || status.isSnapshotStale) {
+                            return startInventoryRefresh();
+                        }
+
+                        showInventoryRefreshStatus(status);
+                        return null;
+                    });
+                }).catch(function (error) {
+                    reportError('Unable to load inventory refresh status', error);
+                });
             }
 
             function appendCell(row, value, className) {
@@ -734,10 +843,9 @@
                 });
             }
 
-            function loadAll(refresh) {
-                setMessage('Scanning native trickplay coverage...', false);
-                var suffix = refresh ? '?refresh=true' : '';
-                return api('Summary' + suffix).then(function (summary) {
+            function loadAll() {
+                setMessage('Loading the completed inventory snapshot...', false);
+                return api('Summary').then(function (summary) {
                     renderSummary(summary);
                     return api(itemQuery(false));
                 }).then(function (items) {
@@ -804,7 +912,7 @@
                     renderItems(currentItemResult);
                 }
                 if (activeJobFinished) {
-                    loadAll(false);
+                    loadInventoryDashboard();
                 }
             }
 
@@ -976,7 +1084,10 @@
                 initialized = true;
                 byId('applyFilters').addEventListener('click', function () { startIndex = 0; loadItems(false); });
                 byId('queueFiltered').addEventListener('click', queueFilteredItems);
-                byId('refreshInventory').addEventListener('click', function () { startIndex = 0; loadAll(true); });
+                byId('refreshInventory').addEventListener('click', function () {
+                    startIndex = 0;
+                    startInventoryRefresh();
+                });
                 byId('refreshJobs').addEventListener('click', function () { loadJobs(true); });
                 byId('clearHistory').addEventListener('click', clearHistory);
                 byId('saveSettings').addEventListener('click', saveSettings);
@@ -1039,7 +1150,7 @@
             page.addEventListener('viewshow', function () {
                 initialize();
                 setActiveTab(activeTab, false);
-                loadAll(false);
+                loadInventoryDashboard();
                 loadSettings();
                 if (jobPollTimer) { clearInterval(jobPollTimer); }
                 jobPollTimer = setInterval(function () { loadJobs(false, activeTab === 'queue'); }, 5000);
@@ -1051,6 +1162,7 @@
                     clearInterval(jobPollTimer);
                     jobPollTimer = null;
                 }
+                stopInventoryPolling();
             });
         }());
     </script>

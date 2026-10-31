@@ -92,7 +92,6 @@ public sealed class TrickplayGenerationService
                 "Jellyfin returned from generation without creating every expected resolution. Check the Jellyfin server log.");
         }
 
-        _inventoryService.Invalidate();
     }
 }
 

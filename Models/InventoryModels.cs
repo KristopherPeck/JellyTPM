@@ -193,6 +193,33 @@ public sealed class TrickplayInventorySummary
 }
 
 /// <summary>
+/// Describes the server-side inventory refresh worker and its latest completed snapshot.
+/// </summary>
+public sealed class TrickplayInventoryRefreshStatus
+{
+    /// <summary>Gets or sets a value indicating whether a refresh is queued or running.</summary>
+    public bool IsRefreshing { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether a completed snapshot is available.</summary>
+    public bool HasSnapshot { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the available snapshot predates known changes.</summary>
+    public bool IsSnapshotStale { get; set; }
+
+    /// <summary>Gets or sets the UTC time at which the current or latest refresh was requested.</summary>
+    public DateTime? StartedAtUtc { get; set; }
+
+    /// <summary>Gets or sets the UTC time at which the latest refresh attempt finished.</summary>
+    public DateTime? CompletedAtUtc { get; set; }
+
+    /// <summary>Gets or sets the generation time of the currently available snapshot.</summary>
+    public DateTime? SnapshotGeneratedAtUtc { get; set; }
+
+    /// <summary>Gets or sets a safe administrator-facing failure message.</summary>
+    public string ErrorMessage { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Bounded result page returned to the dashboard.
 /// </summary>
 /// <typeparam name="T">Result item type.</typeparam>

@@ -41,6 +41,22 @@ public sealed class JellyTPMController : ControllerBase
             .ConfigureAwait(false));
     }
 
+    /// <summary>Gets the server-side inventory refresh worker status.</summary>
+    [HttpGet("Refresh")]
+    [ProducesResponseType<TrickplayInventoryRefreshStatus>(StatusCodes.Status200OK)]
+    public ActionResult<TrickplayInventoryRefreshStatus> GetRefreshStatus()
+    {
+        return Ok(_inventoryService.GetRefreshStatus());
+    }
+
+    /// <summary>Queues a server-side inventory refresh without tying it to this request.</summary>
+    [HttpPost("Refresh")]
+    [ProducesResponseType<TrickplayInventoryRefreshStatus>(StatusCodes.Status202Accepted)]
+    public ActionResult<TrickplayInventoryRefreshStatus> StartRefresh()
+    {
+        return Accepted(_inventoryService.RequestRefresh());
+    }
+
     /// <summary>Gets a filtered and server-paged item inventory.</summary>
     [HttpGet("Items")]
     [ProducesResponseType<PagedResult<TrickplayItemSummary>>(StatusCodes.Status200OK)]

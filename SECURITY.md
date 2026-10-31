@@ -36,5 +36,7 @@ When Jellyfin is configured to save trickplay alongside media, generation and re
 
 Trickplay generation invokes Jellyfin's native processing pipeline and can consume significant CPU, GPU, database, and storage resources. JellyTPM limits the active queue and runs one job at a time, but administrators remain responsible for choosing suitable batch and queue limits for their server.
 
+Inventory refreshes query every inventoried video and can place sustained load on Jellyfin's database for large libraries. Refreshes continue in the server-side worker after the initiating administrator leaves the dashboard. JellyTPM also supplies a configurable daily scheduled refresh; administrators should choose an off-hours trigger appropriate for their server.
+
 Only install JellyTPM releases built for the server ABI stated in the manifest. Validate the release archive and its published checksums before distribution.
 

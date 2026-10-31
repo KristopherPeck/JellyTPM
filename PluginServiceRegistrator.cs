@@ -16,6 +16,8 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<TrickplayInventoryService>();
+        serviceCollection.AddHostedService<TrickplayInventoryService>(
+            provider => provider.GetRequiredService<TrickplayInventoryService>());
         serviceCollection.AddSingleton<TrickplayJobStore>();
         serviceCollection.AddSingleton<TrickplayGenerationService>();
         serviceCollection.AddSingleton<TrickplayQueueService>();

@@ -208,8 +208,8 @@ public sealed class TrickplayQueueService : BackgroundService
         try
         {
             await _generationService.ExecuteAsync(job, stoppingToken).ConfigureAwait(false);
+            await UpdateCachedInventoryItemAsync(job, stoppingToken).ConfigureAwait(false);
             await _jobStore.CompleteAsync(job.Id, stoppingToken).ConfigureAwait(false);
-            _inventoryService.Invalidate();
             _logger.LogInformation(
                 "Completed JellyTPM {Operation} job {JobId} for item {ItemName} ({ItemId}).",
                 job.Operation,
@@ -231,14 +231,38 @@ public sealed class TrickplayQueueService : BackgroundService
                 job.Id,
                 job.ItemName,
                 job.ItemId);
+            await UpdateCachedInventoryItemAsync(job, stoppingToken).ConfigureAwait(false);
             await _jobStore.FailAsync(
                 job.Id,
                 GetSafeFailureMessage(exception),
                 stoppingToken).ConfigureAwait(false);
         }
-        finally
+    }
+
+    private async Task UpdateCachedInventoryItemAsync(
+        TrickplayJob job,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await _inventoryService
+                    .UpdateCachedItemAsync(job.ItemId, job.LibraryId, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                _inventoryService.Invalidate();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _inventoryService.Invalidate();
+        }
+        catch (Exception exception)
+        {
+            _inventoryService.Invalidate();
+            _logger.LogWarning(
+                exception,
+                "Unable to update the cached JellyTPM inventory row for item {ItemId}; a full refresh is required.",
+                job.ItemId);
         }
     }
 

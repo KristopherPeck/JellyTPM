@@ -18,6 +18,8 @@ JellyTPM was designed and developed collaboratively by the project maintainer wi
 ## Features
 
 - Server-wide and per-library coverage totals
+- Server-side background inventory refreshes that continue after leaving the dashboard
+- Configurable Jellyfin scheduled task for daily off-hours inventory reconciliation
 - Paged inventory with library, status, title, show, and season filtering
 - Available, Partial, Missing, Library disabled, and Not eligible states
 - Expected widths, available widths, and thumbnail counts
@@ -65,6 +67,10 @@ Generate missing uses Jellyfin's non-replacement operation. JellyTPM runs one jo
 Regenerate is available from the Preview dialog when an item already has trickplay data. It invokes Jellyfin's replacement operation, which can remove existing trickplay files and database records before rebuilding them. JellyTPM therefore requires explicit confirmation and prevents simultaneous jobs for the same item. If replacement fails, the item can temporarily have no usable trickplay preview.
 
 Jellyfin does not expose reliable numeric per-file trickplay progress to plugins, so JellyTPM reports lifecycle states: Queued, Generating, Completed, Failed, or Cancelled.
+
+Inventory refreshes also run on the Jellyfin server. Administrators can leave the dashboard while a scan is running and return later; the previous completed snapshot remains available until the replacement finishes successfully.
+
+JellyTPM adds **Refresh JellyTPM inventory** under Jellyfin's Scheduled Tasks with a default daily trigger at 4:00 AM server time. Administrators can change or remove that trigger in Jellyfin. Verified JellyTPM generation results update the affected cached item and coverage counters immediately; scheduled and manual full scans reconcile changes made outside JellyTPM.
 
 ## Queue and history settings
 

@@ -8,12 +8,16 @@ All notable changes to JellyTPM will be documented in this file.
 
 ### Added
 
+- Server-side background inventory refreshes with dashboard status polling and duplicate-request coalescing.
+- Configurable Jellyfin scheduled task that reconciles the full inventory daily at 4:00 AM by default.
 - Coarse inventory timing logs for native trickplay loading, per-library queries and row construction, and total snapshot duration.
 - Plugin-repository and manual-installation guidance in the project README.
 - Coverage and generation-queue screenshots in the project README.
 
 ### Fixed
 
+- Preserved the last completed inventory snapshot while a replacement refresh runs or fails.
+- Updated cached item, library, and server coverage totals after each JellyTPM generation result without a full scan.
 - Prevented large-library dashboard loads, paging, and filtering from rebuilding an inventory snapshot that was just completed.
 - Recorded inventory generation timestamps when scans complete and extended the default cache duration to 15 minutes.
 

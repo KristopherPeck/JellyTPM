@@ -10,14 +10,15 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Trickplay;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyTPM.Services;
 
 /// <summary>
-/// Builds a short-lived, read-only snapshot of native Jellyfin trickplay coverage.
+/// Builds and refreshes a cached, read-only snapshot of native Jellyfin trickplay coverage.
 /// </summary>
-public sealed class TrickplayInventoryService
+public sealed class TrickplayInventoryService : BackgroundService
 {
     private const int LibraryQueryPageSize = 500;
     private const int TrickplayQueryPageSize = 1000;
@@ -27,8 +28,19 @@ public sealed class TrickplayInventoryService
     private readonly IServerConfigurationManager _serverConfigurationManager;
     private readonly ILogger<TrickplayInventoryService> _logger;
     private readonly SemaphoreSlim _snapshotLock = new(1, 1);
+    private readonly SemaphoreSlim _refreshSignal = new(0, 1);
+    private readonly object _refreshStateLock = new();
 
-    private InventorySnapshot? _snapshot;
+    private volatile InventorySnapshot? _snapshot;
+    private volatile bool _snapshotInvalidated;
+    private long _snapshotChangeVersion;
+    private bool _refreshInProgress;
+    private DateTime? _refreshStartedAtUtc;
+    private DateTime? _refreshCompletedAtUtc;
+    private string _refreshErrorMessage = string.Empty;
+    private InventorySnapshot? _refreshObservedSnapshot;
+    private TaskCompletionSource<bool>? _refreshCompletion;
+    private CancellationTokenSource? _refreshCancellation;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TrickplayInventoryService"/> class.
@@ -121,6 +133,51 @@ public sealed class TrickplayInventoryService
         return snapshot.Items.FirstOrDefault(item => item.Id == itemId);
     }
 
+    /// <summary>Queues one server-side inventory refresh, coalescing duplicate requests.</summary>
+    public TrickplayInventoryRefreshStatus RequestRefresh()
+    {
+        lock (_refreshStateLock)
+        {
+            EnsureRefreshRequested();
+            return CreateRefreshStatus();
+        }
+    }
+
+    /// <summary>
+    /// Queues or joins the current server-side refresh and waits for it to finish.
+    /// </summary>
+    public async Task RefreshAndWaitAsync(
+        IProgress<double> progress,
+        CancellationToken cancellationToken)
+    {
+        Task<bool> completion;
+        lock (_refreshStateLock)
+        {
+            EnsureRefreshRequested();
+            completion = _refreshCompletion!.Task;
+        }
+
+        progress.Report(0);
+        using var cancellationRegistration = cancellationToken.Register(CancelCurrentRefresh);
+        var succeeded = await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!succeeded)
+        {
+            throw new InvalidOperationException(
+                "The JellyTPM inventory refresh failed. Check the Jellyfin server log for details.");
+        }
+
+        progress.Report(100);
+    }
+
+    /// <summary>Gets the current server-side inventory refresh status.</summary>
+    public TrickplayInventoryRefreshStatus GetRefreshStatus()
+    {
+        lock (_refreshStateLock)
+        {
+            return CreateRefreshStatus();
+        }
+    }
+
     /// <summary>
     /// Builds one current inventory row without scanning every library item.
     /// </summary>
@@ -177,10 +234,217 @@ public sealed class TrickplayInventoryService
             resolutions.Values.ToArray());
     }
 
+    /// <summary>
+    /// Replaces one cached inventory row and atomically recalculates its library and server totals.
+    /// </summary>
+    internal async Task<bool> UpdateCachedItemAsync(
+        Guid itemId,
+        Guid expectedLibraryId,
+        CancellationToken cancellationToken)
+    {
+        var currentItem = await GetCurrentItemAsync(itemId, expectedLibraryId, cancellationToken)
+            .ConfigureAwait(false);
+        if (currentItem is null)
+        {
+            return false;
+        }
+
+        if (!await _snapshotLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            // Do not hold up the generation queue behind a potentially long full-library scan.
+            return false;
+        }
+
+        try
+        {
+            var snapshot = _snapshot;
+            if (snapshot is null)
+            {
+                return false;
+            }
+
+            var itemIndex = Array.FindIndex(snapshot.Items, item => item.Id == itemId);
+            if (itemIndex < 0 || snapshot.Items[itemIndex].LibraryId != expectedLibraryId)
+            {
+                return false;
+            }
+
+            var librarySummary = snapshot.Summary.Libraries
+                .FirstOrDefault(library => library.Id == expectedLibraryId);
+            if (librarySummary is null || librarySummary.TrickplayEnabled != currentItem.LibraryEnabled)
+            {
+                return false;
+            }
+
+            var updatedItems = snapshot.Items.ToArray();
+            updatedItems[itemIndex] = currentItem;
+            _snapshot = new InventorySnapshot
+            {
+                GeneratedAtUtc = snapshot.GeneratedAtUtc,
+                Items = updatedItems,
+                Summary = RebuildSummary(snapshot.Summary, updatedItems, expectedLibraryId)
+            };
+            return true;
+        }
+        finally
+        {
+            _snapshotLock.Release();
+        }
+    }
+
     /// <summary>Invalidates the cached inventory after trickplay data changes.</summary>
     public void Invalidate()
     {
-        _snapshot = null;
+        Interlocked.Increment(ref _snapshotChangeVersion);
+        _snapshotInvalidated = true;
+    }
+
+    /// <inheritdoc />
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await _refreshSignal.WaitAsync(stoppingToken).ConfigureAwait(false);
+                await ProcessQueuedRefreshAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task ProcessQueuedRefreshAsync(CancellationToken stoppingToken)
+    {
+        InventorySnapshot? observedSnapshot;
+        TaskCompletionSource<bool> completion;
+        CancellationTokenSource refreshCancellation;
+        lock (_refreshStateLock)
+        {
+            observedSnapshot = _refreshObservedSnapshot;
+            completion = _refreshCompletion!;
+            refreshCancellation = _refreshCancellation!;
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken,
+            refreshCancellation.Token);
+        try
+        {
+            var snapshot = await RefreshInBackgroundAsync(observedSnapshot, linkedCancellation.Token)
+                .ConfigureAwait(false);
+            CompleteRefresh(string.Empty);
+            completion.TrySetResult(true);
+            _logger.LogInformation(
+                "JellyTPM server-side inventory refresh completed with snapshot {GeneratedAtUtc}.",
+                snapshot.GeneratedAtUtc);
+        }
+        catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested)
+        {
+            var message = stoppingToken.IsCancellationRequested
+                ? string.Empty
+                : "Inventory refresh was cancelled.";
+            CompleteRefresh(message);
+            completion.TrySetCanceled(linkedCancellation.Token);
+            if (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "JellyTPM server-side inventory refresh failed.");
+            CompleteRefresh("Inventory refresh failed. Check the Jellyfin server log for details.");
+            completion.TrySetResult(false);
+        }
+        finally
+        {
+            refreshCancellation.Dispose();
+        }
+    }
+
+    private void EnsureRefreshRequested()
+    {
+        if (_refreshInProgress)
+        {
+            return;
+        }
+
+        _refreshInProgress = true;
+        _refreshStartedAtUtc = DateTime.UtcNow;
+        _refreshCompletedAtUtc = null;
+        _refreshErrorMessage = string.Empty;
+        _refreshObservedSnapshot = _snapshot;
+        _refreshCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _refreshCancellation = new CancellationTokenSource();
+        _refreshSignal.Release();
+    }
+
+    private void CancelCurrentRefresh()
+    {
+        CancellationTokenSource? refreshCancellation;
+        lock (_refreshStateLock)
+        {
+            refreshCancellation = _refreshCancellation;
+        }
+
+        refreshCancellation?.Cancel();
+    }
+
+    private void CompleteRefresh(string errorMessage)
+    {
+        lock (_refreshStateLock)
+        {
+            _refreshInProgress = false;
+            _refreshCompletedAtUtc = DateTime.UtcNow;
+            _refreshErrorMessage = errorMessage;
+            _refreshObservedSnapshot = null;
+            _refreshCompletion = null;
+            _refreshCancellation = null;
+        }
+    }
+
+    private async Task<InventorySnapshot> RefreshInBackgroundAsync(
+        InventorySnapshot? observedSnapshot,
+        CancellationToken cancellationToken)
+    {
+        await _snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var cached = _snapshot;
+            if (cached is not null && !ReferenceEquals(cached, observedSnapshot))
+            {
+                return cached;
+            }
+
+            _logger.LogInformation("Building JellyTPM trickplay inventory snapshot in the server-side worker.");
+            var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
+            var snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            _snapshot = snapshot;
+            _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
+            return snapshot;
+        }
+        finally
+        {
+            _snapshotLock.Release();
+        }
+    }
+
+    private TrickplayInventoryRefreshStatus CreateRefreshStatus()
+    {
+        var snapshot = _snapshot;
+        return new TrickplayInventoryRefreshStatus
+        {
+            IsRefreshing = _refreshInProgress,
+            HasSnapshot = snapshot is not null,
+            IsSnapshotStale = _snapshotInvalidated,
+            StartedAtUtc = _refreshStartedAtUtc,
+            CompletedAtUtc = _refreshCompletedAtUtc,
+            SnapshotGeneratedAtUtc = snapshot?.GeneratedAtUtc,
+            ErrorMessage = _refreshErrorMessage
+        };
     }
 
     private static IEnumerable<TrickplayItemSummary> ApplyFilters(
@@ -230,7 +494,8 @@ public sealed class TrickplayInventoryService
         if (!refresh
             && cached is not null
             && (reuseExistingSnapshot
-                || DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds)))
+                || (!_snapshotInvalidated
+                    && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))))
         {
             return cached;
         }
@@ -249,7 +514,8 @@ public sealed class TrickplayInventoryService
             if (!refresh
                 && cached is not null
                 && (reuseExistingSnapshot
-                    || DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds)))
+                    || (!_snapshotInvalidated
+                        && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))))
             {
                 return cached;
             }
@@ -257,7 +523,9 @@ public sealed class TrickplayInventoryService
             try
             {
                 _logger.LogInformation("Building JellyTPM trickplay inventory snapshot.");
+                var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
                 _snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
                 return _snapshot;
             }
             catch (OperationCanceledException)
@@ -724,6 +992,75 @@ public sealed class TrickplayInventoryService
             NotEligibleItems = items.Count - eligibleItems.Length,
             RemainingItems = partial + missing,
             CompletionPercentage = options.EnableTrickplayImageExtraction
+                ? Percentage(available, eligibleItems.Length)
+                : null
+        };
+    }
+
+    private static TrickplayInventorySummary RebuildSummary(
+        TrickplayInventorySummary existingSummary,
+        IReadOnlyCollection<TrickplayItemSummary> items,
+        Guid affectedLibraryId)
+    {
+        var libraries = existingSummary.Libraries
+            .Select(library => library.Id == affectedLibraryId
+                ? RebuildLibrarySummary(
+                    library,
+                    items.Where(item => item.LibraryId == affectedLibraryId).ToArray())
+                : library)
+            .ToArray();
+        var enabledLibraryIds = libraries
+            .Where(library => library.TrickplayEnabled)
+            .Select(library => library.Id)
+            .ToHashSet();
+        var enabledEligibleItems = items
+            .Where(item => item.Eligible && enabledLibraryIds.Contains(item.LibraryId))
+            .ToArray();
+        var available = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Available);
+        var partial = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Partial);
+        var missing = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Missing);
+
+        return new TrickplayInventorySummary
+        {
+            GeneratedAtUtc = existingSummary.GeneratedAtUtc,
+            ConfiguredWidths = existingSummary.ConfiguredWidths,
+            LibraryCount = libraries.Length,
+            EnabledLibraryCount = enabledLibraryIds.Count,
+            TotalItems = items.Count,
+            EligibleItems = enabledEligibleItems.Length,
+            AvailableItems = available,
+            PartialItems = partial,
+            MissingItems = missing,
+            RemainingItems = partial + missing,
+            CompletionPercentage = Percentage(available, enabledEligibleItems.Length),
+            Libraries = libraries
+        };
+    }
+
+    private static TrickplayLibrarySummary RebuildLibrarySummary(
+        TrickplayLibrarySummary existingSummary,
+        IReadOnlyCollection<TrickplayItemSummary> items)
+    {
+        var eligibleItems = items.Where(item => item.Eligible).ToArray();
+        var available = eligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Available);
+        var partial = eligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Partial);
+        var missing = eligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Missing);
+
+        return new TrickplayLibrarySummary
+        {
+            Id = existingSummary.Id,
+            Name = existingSummary.Name,
+            CollectionType = existingSummary.CollectionType,
+            TrickplayEnabled = existingSummary.TrickplayEnabled,
+            SaveWithMedia = existingSummary.SaveWithMedia,
+            TotalItems = items.Count,
+            EligibleItems = eligibleItems.Length,
+            AvailableItems = available,
+            PartialItems = partial,
+            MissingItems = missing,
+            NotEligibleItems = items.Count - eligibleItems.Length,
+            RemainingItems = partial + missing,
+            CompletionPercentage = existingSummary.TrickplayEnabled
                 ? Percentage(available, eligibleItems.Length)
                 : null
         };
