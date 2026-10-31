@@ -4,6 +4,18 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0.0] - 2026-10-31
+
+### Fixed
+
+- Prevented filtered batch queue requests from starting a full inventory refresh before applying their filters.
+- Reused the latest completed inventory snapshot for batch selection while retaining per-item validation during generation.
+- Hid Jellyfin's floating application header while the JellyTPM dashboard is scrolled and restored it at the top or on exit.
+
+### Changed
+
+- Split the dashboard into Overview and Items tabs and deferred item inventory loading until the Items tab is opened.
+
 ## [0.2.0.0] - 2026-10-31
 
 ### Added

@@ -100,7 +100,7 @@ public sealed class TrickplayQueueService : BackgroundService
         CancellationToken cancellationToken)
     {
         var matching = await _inventoryService
-            .GetMatchingItemsAsync(libraryId, status, search, true, cancellationToken)
+            .GetMatchingItemsAsync(libraryId, status, search, cancellationToken)
             .ConfigureAwait(false);
         var candidates = matching
             .Where(item =>

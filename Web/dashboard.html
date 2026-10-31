@@ -61,6 +61,7 @@
         .jt-tab:hover, .jt-tab:focus-visible { background: rgba(255,255,255,.07); }
         .jt-tab[aria-selected="true"] { border-bottom-color: #00a4dc; background: rgba(0,164,220,.12); }
         .jt-tab-panel[hidden] { display: none !important; }
+        .skinHeader.jt-header-hidden { opacity: 0 !important; pointer-events: none !important; }
         .jt-preview-modal[hidden] { display: none !important; }
         .jt-preview-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 1em; background: rgba(0,0,0,.78); }
         .jt-preview-dialog { width: min(46em, 100%); max-height: calc(100vh - 2em); overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: .55em; padding: 1.25em; background: #171717; box-shadow: 0 1em 3em rgba(0,0,0,.55); }
@@ -87,14 +88,15 @@
             <p class="jt-muted">Audit native Jellyfin trickplay coverage and safely queue missing generation.</p>
 
             <div class="jt-tabs" role="tablist" aria-label="JellyTPM sections">
-                <button type="button" class="jt-tab" role="tab" id="coverageTab" aria-controls="coveragePanel" aria-selected="true" tabindex="0" data-tab="coverage">Coverage</button>
+                <button type="button" class="jt-tab" role="tab" id="overviewTab" aria-controls="overviewPanel" aria-selected="true" tabindex="0" data-tab="overview">Overview</button>
+                <button type="button" class="jt-tab" role="tab" id="itemsTab" aria-controls="itemsPanel" aria-selected="false" tabindex="-1" data-tab="items">Items</button>
                 <button type="button" class="jt-tab" role="tab" id="queueTab" aria-controls="queuePanel" aria-selected="false" tabindex="-1" data-tab="queue">Generation Queue</button>
                 <button type="button" class="jt-tab" role="tab" id="settingsTab" aria-controls="settingsPanel" aria-selected="false" tabindex="-1" data-tab="settings">Settings</button>
             </div>
 
             <div id="globalMessage" class="jt-message" role="status" aria-live="polite"></div>
 
-            <div id="coveragePanel" class="jt-tab-panel" role="tabpanel" aria-labelledby="coverageTab">
+            <div id="overviewPanel" class="jt-tab-panel" role="tabpanel" aria-labelledby="overviewTab">
             <section aria-labelledby="coverageHeading">
                 <h2 id="coverageHeading">Server coverage</h2>
                 <div class="jt-summary">
@@ -107,6 +109,9 @@
                 </div>
                 <p id="snapshotInfo" class="jt-muted"></p>
                 <p id="partialExplanation" class="jt-muted"></p>
+                <div class="jt-section-actions">
+                    <button is="emby-button" type="button" class="raised" id="refreshInventory" title="Force a fresh Jellyfin trickplay inventory scan">Refresh inventory</button>
+                </div>
             </section>
 
             <section aria-labelledby="librariesHeading">
@@ -128,7 +133,9 @@
                     </table>
                 </div>
             </section>
+            </div>
 
+            <div id="itemsPanel" class="jt-tab-panel" role="tabpanel" aria-labelledby="itemsTab" aria-hidden="true" hidden>
             <section aria-labelledby="itemsHeading">
                 <h2 id="itemsHeading">Items</h2>
                 <div class="jt-toolbar">
@@ -153,7 +160,6 @@
                     </div>
                     <button is="emby-button" type="button" class="raised button-submit" id="applyFilters">Apply</button>
                     <button is="emby-button" type="button" class="raised" id="queueFiltered">Queue filtered</button>
-                    <button is="emby-button" type="button" class="raised" id="refreshInventory" title="Force a fresh Jellyfin trickplay inventory scan">Refresh</button>
                 </div>
 
                 <div class="jt-table-wrap">
@@ -298,7 +304,7 @@
             var currentItemResult = null;
             var jobListLimit = 50;
             var preserveCompletedCount = true;
-            var activeTab = 'coverage';
+            var activeTab = 'overview';
             var previewState = null;
             var previewRequestId = 0;
             var previewRenderTimer = null;
@@ -306,12 +312,26 @@
             var lastRenderedJobRequest = 0;
             var inventoryPollTimer = null;
             var inventoryAwaitingRefresh = false;
+            var inventoryHasSnapshot = false;
+            var dashboardVisible = false;
 
             function byId(id) { return page.querySelector('#' + id); }
 
+            function updateAppHeader() {
+                var header = document.querySelector('.skinHeader');
+                if (header) {
+                    header.classList.toggle('jt-header-hidden', dashboardVisible && page.scrollTop > 8);
+                }
+            }
+
+            function restoreAppHeader() {
+                var header = document.querySelector('.skinHeader');
+                if (header) { header.classList.remove('jt-header-hidden'); }
+            }
+
             function setActiveTab(tabName, moveFocus) {
-                var validTabs = ['coverage', 'queue', 'settings'];
-                if (validTabs.indexOf(tabName) < 0) { tabName = 'coverage'; }
+                var validTabs = ['overview', 'items', 'queue', 'settings'];
+                if (validTabs.indexOf(tabName) < 0) { tabName = 'overview'; }
                 activeTab = tabName;
                 validTabs.forEach(function (name) {
                     var selected = name === activeTab;
@@ -323,6 +343,13 @@
                     panel.setAttribute('aria-hidden', selected ? 'false' : 'true');
                 });
                 if (moveFocus) { byId(activeTab + 'Tab').focus(); }
+                if (activeTab === 'items' && !currentItemResult) {
+                    if (inventoryHasSnapshot) {
+                        loadItems(false);
+                    } else {
+                        setMessage('The item inventory will be available after the server finishes its first refresh.', false);
+                    }
+                }
                 if (activeTab === 'queue') { loadJobs(true, true); }
             }
 
@@ -408,9 +435,10 @@
             }
 
             function showInventoryRefreshStatus(status) {
+                inventoryHasSnapshot = Boolean(status.hasSnapshot);
                 var button = byId('refreshInventory');
                 button.disabled = Boolean(status.isRefreshing);
-                button.textContent = status.isRefreshing ? 'Refreshing...' : 'Refresh';
+                button.textContent = status.isRefreshing ? 'Refreshing inventory...' : 'Refresh inventory';
                 if (status.isRefreshing) {
                     var message = 'Inventory refresh is running on the Jellyfin server. You can leave this page and return later.';
                     if (status.hasSnapshot) {
@@ -474,6 +502,7 @@
 
             function loadInventoryDashboard() {
                 return api('Refresh?_=' + encodeURIComponent(Date.now())).then(function (status) {
+                    inventoryHasSnapshot = Boolean(status.hasSnapshot);
                     var loadSnapshot = status.hasSnapshot ? loadAll() : Promise.resolve();
                     return loadSnapshot.then(function () {
                         if (status.isRefreshing) {
@@ -843,16 +872,23 @@
                 });
             }
 
-            function loadAll() {
+            function loadSummary() {
                 setMessage('Loading the completed inventory snapshot...', false);
                 return api('Summary').then(function (summary) {
                     renderSummary(summary);
-                    return api(itemQuery(false));
-                }).then(function (items) {
-                    renderItems(items);
                     setMessage('', false);
                 }).catch(function (error) {
                     reportError('Unable to load trickplay coverage', error);
+                });
+            }
+
+            function loadAll() {
+                return loadSummary().then(function () {
+                    if (activeTab === 'items' || currentItemResult) {
+                        return loadItems(false);
+                    }
+
+                    return null;
                 });
             }
 
@@ -912,7 +948,7 @@
                     renderItems(currentItemResult);
                 }
                 if (activeJobFinished) {
-                    loadInventoryDashboard();
+                    loadAll();
                 }
             }
 
@@ -1094,7 +1130,7 @@
                 page.querySelectorAll('.jt-tab').forEach(function (tab) {
                     tab.addEventListener('click', function () { setActiveTab(tab.dataset.tab, false); });
                     tab.addEventListener('keydown', function (event) {
-                        var tabs = ['coverage', 'queue', 'settings'];
+                        var tabs = ['overview', 'items', 'queue', 'settings'];
                         var currentIndex = tabs.indexOf(tab.dataset.tab);
                         var nextIndex = currentIndex;
                         if (event.key === 'ArrowRight') { nextIndex = (currentIndex + 1) % tabs.length; }
@@ -1145,11 +1181,16 @@
                 byId('nextItems').addEventListener('click', function () {
                     if (startIndex + pageSize < totalItems) { startIndex += pageSize; loadItems(false); }
                 });
+                page.addEventListener('scroll', updateAppHeader, { passive: true });
             }
 
             page.addEventListener('viewshow', function () {
+                dashboardVisible = true;
                 initialize();
-                setActiveTab(activeTab, false);
+                currentItemResult = null;
+                inventoryHasSnapshot = false;
+                setActiveTab('overview', false);
+                updateAppHeader();
                 loadInventoryDashboard();
                 loadSettings();
                 if (jobPollTimer) { clearInterval(jobPollTimer); }
@@ -1157,6 +1198,8 @@
             });
 
             page.addEventListener('viewhide', function () {
+                dashboardVisible = false;
+                restoreAppHeader();
                 if (previewState) { closePreview(); }
                 if (jobPollTimer) {
                     clearInterval(jobPollTimer);

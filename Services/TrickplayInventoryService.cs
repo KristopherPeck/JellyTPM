@@ -100,17 +100,18 @@ public sealed class TrickplayInventoryService : BackgroundService
         };
     }
 
-    /// <summary>Gets every inventory row matching server-side dashboard filters.</summary>
+    /// <summary>
+    /// Gets every inventory row matching server-side dashboard filters from the latest completed snapshot.
+    /// </summary>
     public async Task<TrickplayItemSummary[]> GetMatchingItemsAsync(
         Guid? libraryId,
         TrickplayInventoryStatus? status,
         string? search,
-        bool refresh,
         CancellationToken cancellationToken)
     {
         var snapshot = await GetSnapshotAsync(
-            refresh,
-            reuseExistingSnapshot: false,
+            refresh: false,
+            reuseExistingSnapshot: true,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         return ApplyFilters(snapshot.Items, libraryId, status, search)
             .OrderBy(item => item.LibraryName, StringComparer.OrdinalIgnoreCase)

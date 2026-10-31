@@ -9,6 +9,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.3.0.0",
+        "changelog": "Beta 3 queues filtered batches from the latest completed snapshot and adds a faster, stats-focused Overview with lazy-loaded Items.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.3.0.0/JellyTPM_0.3.0.0.zip",
+        "checksum": "BAE94E0B894FF76F00E55F69338AF934",
+        "timestamp": "2026-10-31T19:32:29Z"
+      },
+      {
         "version": "0.2.0.0",
         "changelog": "Beta 2 adds background and scheduled inventory refreshes, immediate post-generation counter updates, snapshot reuse, and scan timing diagnostics.",
         "targetAbi": "12.4.0.0",
