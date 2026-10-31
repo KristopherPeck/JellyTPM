@@ -11,6 +11,10 @@
 
 JellyTPM gives Jellyfin administrators a searchable view of native trickplay coverage and a controlled queue for generating, previewing, and replacing trickplay thumbnails.
 
+## AI development disclosure
+
+JellyTPM was designed and developed collaboratively by the project maintainer with assistance from OpenAI Codex. AI was used during research, implementation, refactoring, security review, troubleshooting, and documentation. AI-generated suggestions are treated as drafts rather than authoritative results; the maintainer directs the project, reviews changes, and is responsible for validating release candidates before publication.
+
 ## Features
 
 - Server-wide and per-library coverage totals
