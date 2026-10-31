@@ -15,7 +15,7 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets the number of seconds an inventory snapshot may be reused.
     /// </summary>
-    public int InventoryCacheSeconds { get; set; } = 30;
+    public int InventoryCacheSeconds { get; set; } = 900;
 
     /// <summary>
     /// Gets or sets the default number of rows returned by the item endpoint.

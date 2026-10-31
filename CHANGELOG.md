@@ -4,6 +4,21 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0.0] - 2026-10-31
+
+### Added
+
+- Coarse inventory timing logs for native trickplay loading, per-library queries and row construction, and total snapshot duration.
+- Plugin-repository and manual-installation guidance in the project README.
+- Coverage and generation-queue screenshots in the project README.
+
+### Fixed
+
+- Prevented large-library dashboard loads, paging, and filtering from rebuilding an inventory snapshot that was just completed.
+- Recorded inventory generation timestamps when scans complete and extended the default cache duration to 15 minutes.
+
+## [0.1.0.0] - 2026-10-30
+
 ### Added
 
 - Initial Jellyfin 12.4 plugin scaffold.
@@ -52,5 +67,4 @@ All notable changes to JellyTPM will be documented in this file.
 - Updated security documentation for generation, replacement, and media-storage risks.
 - Reorganized the README around current coverage, preview, queue, and regeneration behavior.
 - Normalized manifest arrays so post-update verification works across PowerShell versions.
-- Added plugin-repository and manual-installation instructions to the main README.
 

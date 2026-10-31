@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
@@ -49,7 +50,10 @@ public sealed class TrickplayInventoryService
         bool refresh,
         CancellationToken cancellationToken)
     {
-        return (await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false)).Summary;
+        return (await GetSnapshotAsync(
+            refresh,
+            reuseExistingSnapshot: true,
+            cancellationToken: cancellationToken).ConfigureAwait(false)).Summary;
     }
 
     /// <summary>Gets a bounded, filtered page of inventory rows.</summary>
@@ -62,7 +66,10 @@ public sealed class TrickplayInventoryService
         bool refresh,
         CancellationToken cancellationToken)
     {
-        var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
+        var snapshot = await GetSnapshotAsync(
+            refresh,
+            reuseExistingSnapshot: true,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         var matching = ApplyFilters(snapshot.Items, libraryId, status, search)
             .OrderBy(item => item.LibraryName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
@@ -89,7 +96,10 @@ public sealed class TrickplayInventoryService
         bool refresh,
         CancellationToken cancellationToken)
     {
-        var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
+        var snapshot = await GetSnapshotAsync(
+            refresh,
+            reuseExistingSnapshot: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         return ApplyFilters(snapshot.Items, libraryId, status, search)
             .OrderBy(item => item.LibraryName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.ParentTitle, StringComparer.OrdinalIgnoreCase)
@@ -104,7 +114,10 @@ public sealed class TrickplayInventoryService
         bool refresh,
         CancellationToken cancellationToken)
     {
-        var snapshot = await GetSnapshotAsync(refresh, cancellationToken).ConfigureAwait(false);
+        var snapshot = await GetSnapshotAsync(
+            refresh,
+            reuseExistingSnapshot: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         return snapshot.Items.FirstOrDefault(item => item.Id == itemId);
     }
 
@@ -208,14 +221,16 @@ public sealed class TrickplayInventoryService
 
     private async Task<InventorySnapshot> GetSnapshotAsync(
         bool refresh,
+        bool reuseExistingSnapshot,
         CancellationToken cancellationToken)
     {
-        var cacheSeconds = Math.Clamp(Plugin.Instance?.Configuration.InventoryCacheSeconds ?? 30, 5, 300);
+        var cacheSeconds = Math.Clamp(Plugin.Instance?.Configuration.InventoryCacheSeconds ?? 900, 5, 3600);
         var observedSnapshot = _snapshot;
         var cached = observedSnapshot;
         if (!refresh
             && cached is not null
-            && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))
+            && (reuseExistingSnapshot
+                || DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds)))
         {
             return cached;
         }
@@ -233,7 +248,8 @@ public sealed class TrickplayInventoryService
 
             if (!refresh
                 && cached is not null
-                && DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds))
+                && (reuseExistingSnapshot
+                    || DateTime.UtcNow - cached.GeneratedAtUtc < TimeSpan.FromSeconds(cacheSeconds)))
             {
                 return cached;
             }
@@ -242,10 +258,6 @@ public sealed class TrickplayInventoryService
             {
                 _logger.LogInformation("Building JellyTPM trickplay inventory snapshot.");
                 _snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
-                _logger.LogInformation(
-                    "Built JellyTPM trickplay inventory snapshot for {LibraryCount} libraries and {ItemCount} items.",
-                    _snapshot.Summary.LibraryCount,
-                    _snapshot.Summary.TotalItems);
                 return _snapshot;
             }
             catch (OperationCanceledException)
@@ -266,7 +278,7 @@ public sealed class TrickplayInventoryService
 
     private async Task<InventorySnapshot> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
-        var generatedAtUtc = DateTime.UtcNow;
+        var snapshotStopwatch = Stopwatch.StartNew();
         var trickplayOptions = _serverConfigurationManager.Configuration.TrickplayOptions;
         var configuredWidths = (trickplayOptions.WidthResolutions ?? [])
             .Where(width => width > 0)
@@ -299,7 +311,12 @@ public sealed class TrickplayInventoryService
             }
 
             var options = folder.LibraryOptions ?? new LibraryOptions();
-            var libraryItems = LoadLibraryVideos(libraryId, cancellationToken)
+            var libraryQueryElapsed = TimeSpan.Zero;
+            var libraryBuildStopwatch = Stopwatch.StartNew();
+            var libraryItems = LoadLibraryVideos(
+                    libraryId,
+                    elapsed => libraryQueryElapsed += elapsed,
+                    cancellationToken)
                 .Select(video => BuildItem(
                     video,
                     libraryId,
@@ -310,6 +327,18 @@ public sealed class TrickplayInventoryService
                     configuredWidths,
                     trickplayByItem.GetValueOrDefault(video.Id) ?? []))
                 .ToArray();
+            libraryBuildStopwatch.Stop();
+            var inventoryConstructionElapsed = libraryBuildStopwatch.Elapsed - libraryQueryElapsed;
+            _logger.LogInformation(
+                "Queried Jellyfin library {LibraryName} and loaded {VideoCount} videos in {ElapsedSeconds:F1} seconds.",
+                folder.Name ?? string.Empty,
+                libraryItems.Length,
+                libraryQueryElapsed.TotalSeconds);
+            _logger.LogInformation(
+                "Constructed inventory rows for library {LibraryName} with {VideoCount} videos in {ElapsedSeconds:F1} seconds.",
+                folder.Name ?? string.Empty,
+                libraryItems.Length,
+                inventoryConstructionElapsed.TotalSeconds);
 
             if (libraryItems.Length == 0)
             {
@@ -337,13 +366,14 @@ public sealed class TrickplayInventoryService
         var missing = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Missing);
         var eligible = enabledEligibleItems.Length;
 
-        return new InventorySnapshot
+        var completedAtUtc = DateTime.UtcNow;
+        var snapshot = new InventorySnapshot
         {
-            GeneratedAtUtc = generatedAtUtc,
+            GeneratedAtUtc = completedAtUtc,
             Items = itemRows.ToArray(),
             Summary = new TrickplayInventorySummary
             {
-                GeneratedAtUtc = generatedAtUtc,
+                GeneratedAtUtc = completedAtUtc,
                 ConfiguredWidths = configuredWidths,
                 LibraryCount = libraryRows.Count,
                 EnabledLibraryCount = enabledLibraryIds.Count,
@@ -357,13 +387,22 @@ public sealed class TrickplayInventoryService
                 Libraries = libraryRows.ToArray()
             }
         };
+        snapshotStopwatch.Stop();
+        _logger.LogInformation(
+            "Built JellyTPM trickplay inventory snapshot for {LibraryCount} libraries and {ItemCount} items in {ElapsedSeconds:F1} seconds.",
+            snapshot.Summary.LibraryCount,
+            snapshot.Summary.TotalItems,
+            snapshotStopwatch.Elapsed.TotalSeconds);
+        return snapshot;
     }
 
     private async Task<Dictionary<Guid, List<TrickplayInfo>>> LoadTrickplayInfoAsync(
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         var result = new Dictionary<Guid, List<TrickplayInfo>>();
         var offset = 0;
+        var recordCount = 0;
 
         while (true)
         {
@@ -374,6 +413,7 @@ public sealed class TrickplayInventoryService
 
             foreach (var info in page)
             {
+                recordCount++;
                 if (!result.TryGetValue(info.ItemId, out var infos))
                 {
                     infos = [];
@@ -391,10 +431,19 @@ public sealed class TrickplayInventoryService
             offset += page.Count;
         }
 
+        stopwatch.Stop();
+        _logger.LogInformation(
+            "Loaded {TrickplayRecordCount} native trickplay records for {ItemCount} items in {ElapsedSeconds:F1} seconds.",
+            recordCount,
+            result.Count,
+            stopwatch.Elapsed.TotalSeconds);
         return result;
     }
 
-    private IEnumerable<Video> LoadLibraryVideos(Guid libraryId, CancellationToken cancellationToken)
+    private IEnumerable<Video> LoadLibraryVideos(
+        Guid libraryId,
+        Action<TimeSpan> recordQueryElapsed,
+        CancellationToken cancellationToken)
     {
         var startIndex = 0;
         while (true)
@@ -413,7 +462,10 @@ public sealed class TrickplayInventoryService
                 StartIndex = startIndex,
                 Limit = LibraryQueryPageSize
             };
+            var queryStopwatch = Stopwatch.StartNew();
             var page = _libraryManager.GetItemList(query).OfType<Video>().ToArray();
+            queryStopwatch.Stop();
+            recordQueryElapsed(queryStopwatch.Elapsed);
             foreach (var video in page)
             {
                 yield return video;

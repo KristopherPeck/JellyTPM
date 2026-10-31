@@ -9,6 +9,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.2.0.0",
+        "changelog": "Beta 2 prevents redundant large-library inventory scans and adds coarse scan timing diagnostics.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.2.0.0/JellyTPM_0.2.0.0.zip",
+        "checksum": "39FF8DC2F351BA795C9B2161939511E1",
+        "timestamp": "2026-10-31T13:44:36Z"
+      },
+      {
         "version": "0.1.0.0",
         "changelog": "Initial beta release for Jellyfin 12.4.",
         "targetAbi": "12.4.0.0",

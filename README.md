@@ -30,6 +30,20 @@ JellyTPM was designed and developed collaboratively by the project maintainer wi
 - Post-generation validation, retained history, queued-job cancellation, and completed totals
 - Separate Coverage, Generation Queue, and Settings tabs in Jellyfin's administrator dashboard
 
+## Screenshots
+
+### Coverage dashboard
+
+Server-wide totals and per-library completion show where trickplay generation is still needed.
+
+![JellyTPM Coverage dashboard showing server totals and per-library trickplay completion](assets/screenshots/coverage-dashboard.png)
+
+### Generation queue
+
+Queue status and retained history keep generation activity visible without leaving the Jellyfin dashboard.
+
+![JellyTPM Generation Queue showing queued, generating, completed, and failed totals](assets/screenshots/generation-queue.png)
+
 ## How coverage is classified
 
 | Status | Meaning |
