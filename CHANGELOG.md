@@ -7,6 +7,7 @@ All notable changes to JellyTPM will be documented in this file.
 ### Changed
 
 - Limited generation queue pages to 50 jobs and added Previous and Next navigation through active and retained records.
+- Standardized Items toolbar and row-action button dimensions and spacing.
 
 ## [0.3.0.0] - 2026-10-31
 
