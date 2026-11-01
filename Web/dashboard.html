@@ -218,7 +218,11 @@
                         <tbody id="jobRows"></tbody>
                     </table>
                 </div>
-                <p id="jobPageInfo" class="jt-muted"></p>
+                <div class="jt-pager" aria-label="Generation queue pages">
+                    <button is="emby-button" type="button" class="raised" id="previousJobs">Previous</button>
+                    <span id="jobPageInfo" class="jt-page-info jt-muted"></span>
+                    <button is="emby-button" type="button" class="raised" id="nextJobs">Next</button>
+                </div>
             </section>
 
             <section id="settingsPanel" class="jt-tab-panel" role="tabpanel" aria-labelledby="settingsTab" aria-hidden="true" hidden>
@@ -302,7 +306,8 @@
             var jobPollTimer = null;
             var activeJobStates = {};
             var currentItemResult = null;
-            var jobListLimit = 50;
+            var jobStartIndex = 0;
+            var jobPageSize = 50;
             var preserveCompletedCount = true;
             var activeTab = 'overview';
             var previewState = null;
@@ -936,9 +941,13 @@
                         }
                         body.appendChild(row);
                     });
+                    var firstJob = result.totalCount === 0 ? 0 : result.startIndex + 1;
+                    var lastJob = Math.min(result.startIndex + result.items.length, result.totalCount);
                     byId('jobPageInfo').textContent = result.totalCount
-                        ? 'Showing ' + result.items.length + ' of ' + result.totalCount + ' active and retained jobs.'
+                        ? firstJob + '-' + lastJob + ' of ' + result.totalCount
                         : 'No generation jobs yet.';
+                    byId('previousJobs').disabled = result.startIndex <= 0;
+                    byId('nextJobs').disabled = result.startIndex + result.items.length >= result.totalCount;
                 }
 
                 var activeJobFinished = Object.keys(previousActiveJobStates).some(function (itemId) {
@@ -955,11 +964,17 @@
             function loadJobs(showErrors, renderHistory) {
                 if (renderHistory == null) { renderHistory = activeTab === 'queue'; }
                 var requestSequence = ++jobRequestSequence;
-                var path = 'Jobs?startIndex=0&limit=' + encodeURIComponent(jobListLimit)
+                var path = 'Jobs?startIndex=' + encodeURIComponent(jobStartIndex)
+                    + '&limit=' + encodeURIComponent(jobPageSize)
                     + '&_=' + encodeURIComponent(Date.now());
                 return api(path).then(function (result) {
                     if (requestSequence < lastRenderedJobRequest) { return; }
                     lastRenderedJobRequest = requestSequence;
+                    if (renderHistory && result.totalCount > 0 && result.startIndex >= result.totalCount) {
+                        jobStartIndex = Math.floor((result.totalCount - 1) / jobPageSize) * jobPageSize;
+                        return loadJobs(showErrors, renderHistory);
+                    }
+                    if (result.totalCount === 0) { jobStartIndex = 0; }
                     renderJobs(result, renderHistory);
                 }).catch(function (error) {
                     if (requestSequence < lastRenderedJobRequest) { return; }
@@ -990,6 +1005,7 @@
                             + result.activeQueueLimit + ' was reached.';
                     }
                     setMessage(message, false);
+                    jobStartIndex = 0;
                     return loadJobs(true);
                 }).then(function () {
                     return loadItems(false);
@@ -1009,6 +1025,7 @@
 
                 apiRequest('Jobs/History', 'DELETE').then(function (result) {
                     setMessage('Cleared ' + result.removedItems + ' history records.', false);
+                    jobStartIndex = 0;
                     return loadJobs(true);
                 }).catch(function (error) {
                     reportError('Unable to clear job history', error);
@@ -1023,7 +1040,6 @@
                 byId('maximumActiveJobs').value = settings.maximumActiveJobs;
                 preserveCompletedCount = settings.preserveCompletedCount;
                 byId('completedJobsLabel').textContent = preserveCompletedCount ? 'Completed total' : 'Completed retained';
-                jobListLimit = settings.maximumRetainedJobs;
             }
 
             function loadSettings() {
@@ -1063,6 +1079,7 @@
                     setMessage(result.created
                         ? 'Generation queued for ' + itemName + '.'
                         : itemName + ' is already queued or generating.', false);
+                    jobStartIndex = 0;
                     return loadJobs(true);
                 }).then(function () {
                     return loadItems(false);
@@ -1090,6 +1107,7 @@
                     setMessage(result.created
                         ? 'Regeneration queued for ' + item.name + '.'
                         : item.name + ' already has a queued or generating job.', false);
+                    jobStartIndex = 0;
                     return loadJobs(true);
                 }).then(function () {
                     return loadItems(false);
@@ -1181,6 +1199,14 @@
                 byId('nextItems').addEventListener('click', function () {
                     if (startIndex + pageSize < totalItems) { startIndex += pageSize; loadItems(false); }
                 });
+                byId('previousJobs').addEventListener('click', function () {
+                    jobStartIndex = Math.max(0, jobStartIndex - jobPageSize);
+                    loadJobs(true, true);
+                });
+                byId('nextJobs').addEventListener('click', function () {
+                    jobStartIndex += jobPageSize;
+                    loadJobs(true, true);
+                });
                 page.addEventListener('scroll', updateAppHeader, { passive: true });
             }
 
@@ -1189,6 +1215,7 @@
                 initialize();
                 currentItemResult = null;
                 inventoryHasSnapshot = false;
+                jobStartIndex = 0;
                 setActiveTab('overview', false);
                 updateAppHeader();
                 loadInventoryDashboard();

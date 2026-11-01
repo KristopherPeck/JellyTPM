@@ -9,6 +9,7 @@ public sealed class TrickplayJobStore
 {
     private const string StoreFileName = "generation-jobs.json";
     private const int MaximumAllowedActiveJobs = 5000;
+    private const int MaximumJobPageSize = 50;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -167,7 +168,7 @@ public sealed class TrickplayJobStore
                     .OrderByDescending(job => job.FinishedAtUtc ?? job.QueuedAtUtc))
                 .ToArray();
             var boundedStart = Math.Max(0, startIndex);
-            var boundedLimit = Math.Clamp(limit, 1, 500);
+            var boundedLimit = Math.Clamp(limit, 1, MaximumJobPageSize);
             return new TrickplayJobPage
             {
                 Items = ordered.Skip(boundedStart).Take(boundedLimit).Select(Copy).ToArray(),

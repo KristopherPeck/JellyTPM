@@ -4,6 +4,10 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Limited generation queue pages to 50 jobs and added Previous and Next navigation through active and retained records.
+
 ## [0.3.0.0] - 2026-10-31
 
 ### Fixed
