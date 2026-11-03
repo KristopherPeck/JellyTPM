@@ -4,6 +4,17 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0.0] - 2026-11-02
+
+### Added
+
+- Added a confirmed bulk action that cancels every queued generation job without interrupting the active job.
+
+### Fixed
+
+- Separated filter-toolbar and item-row action sizing and shortened the item generation button label.
+- Collapsed the dashboard status-message space while no status or error is displayed.
+
 ## [0.4.0.0] - 2026-11-02
 
 ### Changed

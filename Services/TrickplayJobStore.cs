@@ -288,6 +288,38 @@ public sealed class TrickplayJobStore
         }
     }
 
+    /// <summary>Cancels every queued job; the generating job and terminal history are unchanged.</summary>
+    public async Task<int> CancelAllQueuedAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var jobs = state.Jobs;
+            var finishedAtUtc = DateTime.UtcNow;
+            var cancelled = 0;
+            foreach (var job in jobs.Where(job => job.Status == TrickplayJobStatus.Queued))
+            {
+                job.Status = TrickplayJobStatus.Cancelled;
+                job.FinishedAtUtc = finishedAtUtc;
+                cancelled++;
+            }
+
+            if (cancelled > 0)
+            {
+                PruneLocked(jobs);
+                SynchronizeCompletedTotalIfNeeded(state);
+                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+
+            return cancelled;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     /// <summary>Deletes retained terminal history without touching queued or generating jobs.</summary>
     public async Task<int> ClearHistoryAsync(CancellationToken cancellationToken)
     {

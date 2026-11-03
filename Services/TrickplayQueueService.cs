@@ -144,6 +144,12 @@ public sealed class TrickplayQueueService : BackgroundService
         return _jobStore.CancelQueuedAsync(jobId, cancellationToken);
     }
 
+    /// <summary>Cancels all queued jobs without interrupting the generating job.</summary>
+    public Task<int> CancelAllQueuedAsync(CancellationToken cancellationToken)
+    {
+        return _jobStore.CancelAllQueuedAsync(cancellationToken);
+    }
+
     /// <summary>Gets one durable queue or history record.</summary>
     public Task<TrickplayJob?> GetJobAsync(Guid jobId, CancellationToken cancellationToken)
     {

@@ -14,6 +14,7 @@
         .jt-page { max-width: 1200px; }
         .jt-muted { opacity: .72; }
         .jt-message { min-height: 1.5em; margin: .75em 0; }
+        .jt-message:empty { min-height: 0; margin: 0; }
         .jt-message.error { color: #ff8a80; }
         .jt-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .75em; margin: 1.25em 0; }
         .jt-card { border: 1px solid rgba(255,255,255,.16); border-radius: .45em; padding: 1em; background: rgba(255,255,255,.04); }
@@ -23,8 +24,7 @@
         .jt-toolbar .selectContainer { flex: 0 1 16em; margin-bottom: 0; }
         .jt-toolbar .jt-library-filter { flex-basis: 12em; }
         .jt-toolbar .jt-status-filter { flex: 0 0 12em; min-width: 12em; }
-        .jt-toolbar-actions { display: flex; gap: .5em; align-items: flex-end; }
-        .jt-action-button { box-sizing: border-box; width: 9.5rem; min-width: 9.5rem !important; height: 2.5rem; min-height: 2.5rem; margin: 0; padding: .45rem .75rem; line-height: 1.2; text-align: center; }
+        .jt-toolbar-action { box-sizing: border-box; flex: 0 0 8.75rem; width: 8.75rem; min-width: 8.75rem !important; height: 2.75rem; min-height: 2.75rem; margin: 0; padding: .5rem .75rem; line-height: 1.2; text-align: center; }
         .jt-table-wrap { overflow-x: auto; }
         .jt-table { width: 100%; border-collapse: collapse; }
         .jt-table th, .jt-table td { padding: .7em; border-bottom: 1px solid rgba(255,255,255,.12); text-align: left; vertical-align: top; }
@@ -49,6 +49,7 @@
         .jt-actions { white-space: nowrap; }
         .jt-actions button + button { margin-left: .5em; }
         .jt-item-actions { min-width: 9.5rem; }
+        .jt-row-action { box-sizing: border-box; width: 9.5rem; min-width: 9.5rem !important; height: 2.5rem; min-height: 2.5rem; margin: 0; padding: .45rem .75rem; line-height: 1.2; text-align: center; white-space: nowrap; }
         .jt-error-detail { max-width: 24em; white-space: normal; }
         .jt-section-actions { display: flex; flex-wrap: wrap; gap: .75em; margin: .75em 0; }
         .jt-settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 1em; max-width: 52em; }
@@ -76,8 +77,6 @@
         .jt-danger-action:disabled { background: rgba(170,170,170,.22) !important; color: #ddd !important; }
         @media (max-width: 700px) {
             .jt-hide-small { display: none; }
-            .jt-toolbar-actions { flex: 1 1 100%; }
-            .jt-toolbar-actions .jt-action-button { flex: 1 1 0; width: auto; min-width: 0 !important; }
             .jt-preview-controls { grid-template-columns: 1fr; }
             .jt-checkbox-setting { padding-top: 0; }
         }
@@ -159,10 +158,8 @@
                             <option value="NotEligible">Not eligible</option>
                         </select>
                     </div>
-                    <div class="jt-toolbar-actions">
-                        <button is="emby-button" type="button" class="raised button-submit jt-action-button" id="applyFilters">Apply</button>
-                        <button is="emby-button" type="button" class="raised jt-action-button" id="queueFiltered">Queue filtered</button>
-                    </div>
+                    <button is="emby-button" type="button" class="raised button-submit jt-toolbar-action" id="applyFilters">Apply</button>
+                    <button is="emby-button" type="button" class="raised jt-toolbar-action" id="queueFiltered">Queue filtered</button>
                 </div>
 
                 <div class="jt-table-wrap">
@@ -201,6 +198,7 @@
                 </div>
                 <div class="jt-section-actions">
                     <button is="emby-button" type="button" class="raised" id="refreshJobs">Refresh jobs</button>
+                    <button is="emby-button" type="button" class="raised jt-danger-action" id="cancelQueuedJobs" disabled>Cancel all queued</button>
                     <button is="emby-button" type="button" class="raised" id="clearHistory">Clear history</button>
                 </div>
                 <div class="jt-table-wrap">
@@ -311,6 +309,7 @@
             var currentItemResult = null;
             var jobStartIndex = 0;
             var jobPageSize = 50;
+            var queuedJobCount = 0;
             var preserveCompletedCount = true;
             var activeTab = 'overview';
             var previewState = null;
@@ -814,7 +813,7 @@
                         var previewButton = document.createElement('button');
                         previewButton.setAttribute('is', 'emby-button');
                         previewButton.type = 'button';
-                        previewButton.className = 'raised jt-action-button btnPreviewTrickplay';
+                        previewButton.className = 'raised jt-row-action btnPreviewTrickplay';
                         previewButton.dataset.itemId = item.id;
                         previewButton.textContent = 'Preview';
                         actionCell.appendChild(previewButton);
@@ -827,12 +826,12 @@
                         var generateButton = document.createElement('button');
                         generateButton.setAttribute('is', 'emby-button');
                         generateButton.type = 'button';
-                        generateButton.className = 'raised jt-action-button btnGenerateMissing';
+                        generateButton.className = 'raised jt-row-action btnGenerateMissing';
                         generateButton.dataset.itemId = item.id;
                         generateButton.dataset.itemName = item.name;
                         generateButton.textContent = activeJobStatus
                             ? statusLabel(activeJobStatus)
-                            : 'Generate missing';
+                            : 'Generate';
                         generateButton.disabled = Boolean(activeJobStatus);
                         actionCell.appendChild(generateButton);
                         hasAction = true;
@@ -908,6 +907,8 @@
                 });
                 updatePreviewRegenerateState();
                 byId('queuedJobs').textContent = result.counts.queued;
+                queuedJobCount = result.counts.queued;
+                byId('cancelQueuedJobs').disabled = queuedJobCount === 0;
                 byId('generatingJobs').textContent = result.counts.generating;
                 byId('completedJobs').textContent = result.counts.completed;
                 byId('failedJobs').textContent = result.counts.failed;
@@ -1035,6 +1036,26 @@
                 });
             }
 
+            function cancelAllQueuedJobs() {
+                if (queuedJobCount === 0) { return; }
+                var confirmation = 'Cancel all ' + queuedJobCount + ' queued generation jobs? '
+                    + 'The item currently generating will continue.';
+                if (!window.confirm(confirmation)) { return; }
+
+                var button = byId('cancelQueuedJobs');
+                button.disabled = true;
+                apiRequest('Jobs/Queued', 'DELETE').then(function (result) {
+                    setMessage('Cancelled ' + result.cancelledItems + ' queued generation jobs.', false);
+                    jobStartIndex = 0;
+                    return loadJobs(true, true);
+                }).then(function () {
+                    return currentItemResult ? loadItems(false) : null;
+                }).catch(function (error) {
+                    button.disabled = queuedJobCount === 0;
+                    reportError('Unable to cancel queued generation jobs', error);
+                });
+            }
+
             function renderSettings(settings) {
                 byId('historyRetentionDays').value = settings.jobHistoryRetentionDays;
                 byId('maximumRetainedJobs').value = settings.maximumRetainedJobs;
@@ -1088,7 +1109,7 @@
                     return loadItems(false);
                 }).catch(function (error) {
                     button.disabled = false;
-                    button.textContent = 'Generate missing';
+                    button.textContent = 'Generate';
                     reportError('Unable to queue generation for ' + itemName, error);
                 });
             }
@@ -1146,6 +1167,7 @@
                     startInventoryRefresh();
                 });
                 byId('refreshJobs').addEventListener('click', function () { loadJobs(true); });
+                byId('cancelQueuedJobs').addEventListener('click', cancelAllQueuedJobs);
                 byId('clearHistory').addEventListener('click', clearHistory);
                 byId('saveSettings').addEventListener('click', saveSettings);
                 page.querySelectorAll('.jt-tab').forEach(function (tab) {

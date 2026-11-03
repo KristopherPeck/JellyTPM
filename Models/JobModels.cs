@@ -189,3 +189,10 @@ public sealed class TrickplayHistoryClearResult
     /// <summary>Gets or sets the number of terminal records removed.</summary>
     public int RemovedItems { get; set; }
 }
+
+/// <summary>Summarizes a bulk queued-job cancellation.</summary>
+public sealed class TrickplayQueueCancelResult
+{
+    /// <summary>Gets or sets the number of queued jobs cancelled.</summary>
+    public int CancelledItems { get; set; }
+}

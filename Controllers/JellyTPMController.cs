@@ -207,6 +207,16 @@ public sealed class JellyTPMController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Cancels every queued generation job without interrupting the active job.</summary>
+    [HttpDelete("Jobs/Queued")]
+    [ProducesResponseType<TrickplayQueueCancelResult>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<TrickplayQueueCancelResult>> CancelAllQueuedJobs(
+        CancellationToken cancellationToken)
+    {
+        var cancelled = await _queueService.CancelAllQueuedAsync(cancellationToken).ConfigureAwait(false);
+        return Ok(new TrickplayQueueCancelResult { CancelledItems = cancelled });
+    }
+
     /// <summary>Clears completed, failed, and cancelled history without touching active jobs.</summary>
     [HttpDelete("Jobs/History")]
     [ProducesResponseType<TrickplayHistoryClearResult>(StatusCodes.Status200OK)]

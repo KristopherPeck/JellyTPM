@@ -9,6 +9,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.5.0.0",
+        "changelog": "Beta 5 adds bulk queued-job cancellation and refines dashboard action sizing and spacing.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.5.0.0/JellyTPM_0.5.0.0.zip",
+        "checksum": "FFF50D3914B7E9E4829775B3E4F5D67C",
+        "timestamp": "2026-11-03T01:35:10Z"
+      },
+      {
         "version": "0.4.0.0",
         "changelog": "Beta 4 adds 50-job generation queue paging and standardizes Items action controls.",
         "targetAbi": "12.4.0.0",
