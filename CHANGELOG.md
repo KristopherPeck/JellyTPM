@@ -4,6 +4,10 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Moved dashboard status messages beside the page title so updates no longer shift the active tab content.
+
 ## [0.5.0.0] - 2026-11-02
 
 ### Added

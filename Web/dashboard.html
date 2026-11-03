@@ -13,8 +13,9 @@
     <style>
         .jt-page { max-width: 1200px; }
         .jt-muted { opacity: .72; }
-        .jt-message { min-height: 1.5em; margin: .75em 0; }
-        .jt-message:empty { min-height: 0; margin: 0; }
+        .jt-page-heading { display: flex; align-items: baseline; gap: 1em; min-width: 0; margin: .67em 0; }
+        .jt-page-heading h1 { flex: 0 0 auto; margin: 0; }
+        .jt-message { min-width: 0; margin: 0; overflow: hidden; font-size: .9em; text-overflow: ellipsis; white-space: nowrap; }
         .jt-message.error { color: #ff8a80; }
         .jt-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .75em; margin: 1.25em 0; }
         .jt-card { border: 1px solid rgba(255,255,255,.16); border-radius: .45em; padding: 1em; background: rgba(255,255,255,.04); }
@@ -84,7 +85,10 @@
 
     <div data-role="content">
         <div class="content-primary jt-page">
-            <h1>JellyTPM</h1>
+            <div class="jt-page-heading">
+                <h1>JellyTPM</h1>
+                <div id="globalMessage" class="jt-message" role="status" aria-live="polite"></div>
+            </div>
             <p class="jt-muted">Audit native Jellyfin trickplay coverage and safely queue missing generation.</p>
 
             <div class="jt-tabs" role="tablist" aria-label="JellyTPM sections">
@@ -93,8 +97,6 @@
                 <button type="button" class="jt-tab" role="tab" id="queueTab" aria-controls="queuePanel" aria-selected="false" tabindex="-1" data-tab="queue">Generation Queue</button>
                 <button type="button" class="jt-tab" role="tab" id="settingsTab" aria-controls="settingsPanel" aria-selected="false" tabindex="-1" data-tab="settings">Settings</button>
             </div>
-
-            <div id="globalMessage" class="jt-message" role="status" aria-live="polite"></div>
 
             <div id="overviewPanel" class="jt-tab-panel" role="tabpanel" aria-labelledby="overviewTab">
             <section aria-labelledby="coverageHeading">
@@ -425,6 +427,7 @@
             function setMessage(message, isError) {
                 var target = byId('globalMessage');
                 target.textContent = message || '';
+                target.title = message || '';
                 target.classList.toggle('error', Boolean(isError));
             }
 
