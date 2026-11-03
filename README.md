@@ -113,9 +113,17 @@ JellyTPM should be installed only on the Jellyfin version targeted by its releas
 
 ### Manual installation
 
+The plugin repository method is preferred because Jellyfin creates and manages the plugin metadata. For a manual installation or upgrade:
+
 1. Download `JellyTPM_<version>.zip` from the matching [GitHub release](https://github.com/KristopherPeck/JellyTPM/releases).
-2. Extract the archive into a `JellyTPM` directory beneath Jellyfin's plugin directory.
-3. Restart Jellyfin.
+2. Stop Jellyfin before changing plugin files.
+3. At the top level of Jellyfin's plugin directory, move aside or remove old binary directories named `JellyTPM` or `JellyTPM_<old-version>`. Do not remove the `configurations` directory or JellyTPM data files.
+4. Create a versioned directory named `JellyTPM_<version>` using the exact four-part release version, such as `JellyTPM_0.5.0.0`.
+5. Extract the release archive directly into that versioned directory.
+6. Start Jellyfin and confirm the installed version on the Plugins page.
+
+> [!IMPORTANT]
+> Do not manually install JellyTPM into an unversioned `JellyTPM` directory. Without catalog metadata, Jellyfin assigns an unversioned plugin directory the server's version, which can cause it to supersede catalog-installed JellyTPM releases or display inconsistent installed versions.
 
 Common plugin locations include:
 
