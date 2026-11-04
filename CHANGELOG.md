@@ -4,6 +4,10 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Removed redundant page headings beneath the Overview, Items, Generation Queue, and Settings tabs.
+
 ## [0.6.0.0] - 2026-11-03
 
 ### Fixed
