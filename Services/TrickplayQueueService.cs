@@ -165,23 +165,38 @@ public sealed class TrickplayQueueService : BackgroundService
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        try
+        while (!stoppingToken.IsCancellationRequested)
         {
-            var recovered = await _jobStore.RecoverInterruptedAsync(stoppingToken).ConfigureAwait(false);
-            if (recovered > 0)
+            try
             {
-                _logger.LogInformation(
-                    "Returned {JobCount} interrupted JellyTPM generation jobs to the queue.",
-                    recovered);
+                var recovery = await _jobStore.RecoverInterruptedAsync(stoppingToken).ConfigureAwait(false);
+                if (recovery.Requeued > 0)
+                {
+                    _logger.LogInformation(
+                        "Returned {JobCount} interrupted JellyTPM generation jobs to the queue.",
+                        recovery.Requeued);
+                }
+
+                if (recovery.Failed > 0)
+                {
+                    _logger.LogWarning(
+                        "Marked {JobCount} repeatedly interrupted JellyTPM generation jobs as failed.",
+                        recovery.Failed);
+                }
+
+                break;
             }
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
-        }
-        catch (Exception exception)
-        {
-            _logger.LogError(exception, "Failed to recover interrupted JellyTPM generation jobs.");
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(
+                    exception,
+                    "Failed to recover interrupted JellyTPM generation jobs; the queue will retry before processing work.");
+                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+            }
         }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -214,14 +229,6 @@ public sealed class TrickplayQueueService : BackgroundService
         try
         {
             await _generationService.ExecuteAsync(job, stoppingToken).ConfigureAwait(false);
-            await UpdateCachedInventoryItemAsync(job, stoppingToken).ConfigureAwait(false);
-            await _jobStore.CompleteAsync(job.Id, stoppingToken).ConfigureAwait(false);
-            _logger.LogInformation(
-                "Completed JellyTPM {Operation} job {JobId} for item {ItemName} ({ItemId}).",
-                job.Operation,
-                job.Id,
-                job.ItemName,
-                job.ItemId);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -238,10 +245,56 @@ public sealed class TrickplayQueueService : BackgroundService
                 job.ItemName,
                 job.ItemId);
             await UpdateCachedInventoryItemAsync(job, stoppingToken).ConfigureAwait(false);
-            await _jobStore.FailAsync(
-                job.Id,
-                GetSafeFailureMessage(exception),
+            var failureMessage = GetSafeFailureMessage(exception);
+            await PersistTerminalStateAsync(
+                job,
+                TrickplayJobStatus.Failed,
+                token => _jobStore.FailAsync(job.Id, failureMessage, token),
                 stoppingToken).ConfigureAwait(false);
+            return;
+        }
+
+        await UpdateCachedInventoryItemAsync(job, stoppingToken).ConfigureAwait(false);
+        await PersistTerminalStateAsync(
+            job,
+            TrickplayJobStatus.Completed,
+            token => _jobStore.CompleteAsync(job.Id, token),
+            stoppingToken).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "Completed JellyTPM {Operation} job {JobId} for item {ItemName} ({ItemId}).",
+            job.Operation,
+            job.Id,
+            job.ItemName,
+            job.ItemId);
+    }
+
+    private async Task PersistTerminalStateAsync(
+        TrickplayJob job,
+        TrickplayJobStatus terminalStatus,
+        Func<CancellationToken, Task> persist,
+        CancellationToken stoppingToken)
+    {
+        while (true)
+        {
+            try
+            {
+                await persist(stoppingToken).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(
+                    exception,
+                    "Unable to persist {Status} for JellyTPM job {JobId}; the generation queue is paused and will retry.",
+                    terminalStatus,
+                    job.Id);
+                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+            }
         }
     }
 

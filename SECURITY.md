@@ -21,6 +21,7 @@ Do not include API keys, authorization headers, private media paths, or sensitiv
 - Browser-rendered metadata is inserted as text rather than executable HTML.
 - Queue and history files use fixed names inside JellyTPM's plugin data directory.
 - Generation is serialized through one worker, deduplicated by item, and bounded by a configurable active-queue limit.
+- Queue-state changes are published in memory only after durable persistence succeeds. JellyTPM maintains a last-known-good backup and preserves malformed stores under quarantined file names for administrator inspection.
 
 Jellyfin administrators are trusted users. Anyone with an administrator session can queue generation, clear terminal history, cancel queued jobs, change JellyTPM settings, and request regeneration.
 
@@ -35,6 +36,8 @@ When Jellyfin is configured to save trickplay alongside media, generation and re
 ## Operational considerations
 
 Trickplay generation invokes Jellyfin's native processing pipeline and can consume significant CPU, GPU, database, and storage resources. JellyTPM limits the active queue and runs one job at a time, but administrators remain responsible for choosing suitable batch and queue limits for their server.
+
+Jobs interrupted by a server stop are returned to the queue. After three interrupted attempts, JellyTPM marks the job failed so a repeatedly disruptive item cannot restart automatically forever; an administrator can queue the item again after investigating the server log.
 
 Inventory refreshes query every inventoried video and can place sustained load on Jellyfin's database for large libraries. Refreshes continue in the server-side worker after the initiating administrator leaves the dashboard. JellyTPM also supplies a configurable daily scheduled refresh; administrators should choose an off-hours trigger appropriate for their server.
 

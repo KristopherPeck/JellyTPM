@@ -4,9 +4,14 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0.0] - 2026-11-03
+
 ### Fixed
 
 - Moved dashboard status messages beside the page title so updates no longer shift the active tab content.
+- Made queue-state updates transactional so cancelled or failed persistence cannot mutate the active in-memory state.
+- Added last-known-good job-store recovery and quarantining for malformed persistence files.
+- Limited repeatedly interrupted generation jobs to three attempts before requiring an administrator to queue them again.
 
 ## [0.5.0.0] - 2026-11-02
 

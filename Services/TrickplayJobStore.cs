@@ -8,8 +8,11 @@ namespace Jellyfin.Plugin.JellyTPM.Services;
 public sealed class TrickplayJobStore
 {
     private const string StoreFileName = "generation-jobs.json";
+    private const string StoreBackupFileName = "generation-jobs.backup.json";
     private const int MaximumAllowedActiveJobs = 5000;
+    private const int MaximumInterruptedAttempts = 3;
     private const int MaximumJobPageSize = 50;
+    private const long MaximumStoreFileSize = 32 * 1024 * 1024;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -19,6 +22,7 @@ public sealed class TrickplayJobStore
     private readonly ILogger<TrickplayJobStore> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private JobStoreState? _state;
+    private bool _primaryStoreTrusted = true;
 
     /// <summary>Initializes a new instance of the <see cref="TrickplayJobStore"/> class.</summary>
     public TrickplayJobStore(ILogger<TrickplayJobStore> logger)
@@ -35,9 +39,8 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
-            var jobs = state.Jobs;
-            var existing = jobs.FirstOrDefault(job =>
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var existing = loadedState.Jobs.FirstOrDefault(job =>
                 job.ItemId == item.Id
                 && job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating);
             if (existing is not null)
@@ -46,12 +49,14 @@ public sealed class TrickplayJobStore
             }
 
             var activeLimit = GetActiveJobLimit();
-            if (jobs.Count(IsActive) >= activeLimit)
+            if (loadedState.Jobs.Count(IsActive) >= activeLimit)
             {
                 throw new InvalidOperationException(
                     $"The JellyTPM active queue limit of {activeLimit} jobs has been reached.");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
             var job = new TrickplayJob
             {
                 Id = Guid.NewGuid(),
@@ -65,10 +70,10 @@ public sealed class TrickplayJobStore
                 Status = TrickplayJobStatus.Queued,
                 QueuedAtUtc = DateTime.UtcNow
             };
-            jobs.Add(job);
-            PruneLocked(jobs);
+            state.Jobs.Add(job);
+            PruneLocked(state.Jobs);
             SynchronizeCompletedTotalIfNeeded(state);
-            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return new TrickplayEnqueueResult { Job = Copy(job), Created = true };
         }
         finally
@@ -85,7 +90,9 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
             var jobs = state.Jobs;
             var activeItemIds = jobs
                 .Where(job => job.Status is TrickplayJobStatus.Queued or TrickplayJobStatus.Generating)
@@ -131,7 +138,7 @@ public sealed class TrickplayJobStore
 
             PruneLocked(jobs);
             SynchronizeCompletedTotalIfNeeded(state);
-            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return (queuedItems, alreadyActiveItems, queueCapacityLimitedItems, activeQueueLimit);
         }
         finally
@@ -149,16 +156,18 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
-            var jobs = state.Jobs;
-            var countBeforePrune = jobs.Count;
-            PruneLocked(jobs);
-            var completedTotalChanged = SynchronizeCompletedTotalIfNeeded(state);
-            if (jobs.Count != countBeforePrune || completedTotalChanged)
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var state = loadedState;
+            if (RequiresMaintenance(loadedState))
             {
-                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                state = Copy(loadedState);
+                PruneLocked(state.Jobs);
+                SynchronizeCompletedTotalIfNeeded(state);
+                await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
+            var jobs = state.Jobs;
             var ordered = jobs
                 .Where(job => !IsTerminal(job))
                 .OrderBy(job => job.Status == TrickplayJobStatus.Generating ? 0 : 1)
@@ -226,23 +235,27 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
-            var jobs = state.Jobs;
-            var job = jobs
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var queuedJob = loadedState.Jobs
                 .Where(value => value.Status == TrickplayJobStatus.Queued)
                 .OrderBy(value => value.QueuedAtUtc)
                 .FirstOrDefault();
-            if (job is null)
+            if (queuedJob is null)
             {
                 return null;
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
+            var jobs = state.Jobs;
+            var job = jobs.First(value => value.Id == queuedJob.Id);
 
             job.Status = TrickplayJobStatus.Generating;
             job.StartedAtUtc = DateTime.UtcNow;
             job.FinishedAtUtc = null;
             job.AttemptCount++;
             job.ErrorMessage = string.Empty;
-            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return Copy(job);
         }
         finally
@@ -269,17 +282,19 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
-            var jobs = state.Jobs;
-            var job = jobs.FirstOrDefault(value => value.Id == jobId);
-            if (job?.Status != TrickplayJobStatus.Queued)
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedJob = loadedState.Jobs.FirstOrDefault(value => value.Id == jobId);
+            if (loadedJob?.Status != TrickplayJobStatus.Queued)
             {
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
+            var job = state.Jobs.First(value => value.Id == jobId);
             job.Status = TrickplayJobStatus.Cancelled;
             job.FinishedAtUtc = DateTime.UtcNow;
-            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             return true;
         }
         finally
@@ -294,7 +309,14 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            if (!loadedState.Jobs.Any(job => job.Status == TrickplayJobStatus.Queued))
+            {
+                return 0;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
             var jobs = state.Jobs;
             var finishedAtUtc = DateTime.UtcNow;
             var cancelled = 0;
@@ -309,7 +331,7 @@ public sealed class TrickplayJobStore
             {
                 PruneLocked(jobs);
                 SynchronizeCompletedTotalIfNeeded(state);
-                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+                await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
             return cancelled;
@@ -326,13 +348,21 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            if (!loadedState.Jobs.Any(IsTerminal)
+                && !WouldSynchronizeCompletedTotal(loadedState))
+            {
+                return 0;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
             var jobs = state.Jobs;
             var removed = jobs.RemoveAll(IsTerminal);
             var completedTotalChanged = SynchronizeCompletedTotalIfNeeded(state);
             if (removed > 0 || completedTotalChanged)
             {
-                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+                await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
             return removed;
@@ -343,28 +373,51 @@ public sealed class TrickplayJobStore
         }
     }
 
-    /// <summary>Returns interrupted running jobs to the queue after a server restart.</summary>
-    public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken)
+    /// <summary>Recovers interrupted jobs after restart and fails jobs that exceed the retry limit.</summary>
+    public async Task<(int Requeued, int Failed)> RecoverInterruptedAsync(CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedInterrupted = loadedState.Jobs
+                .Where(job => job.Status == TrickplayJobStatus.Generating)
+                .ToArray();
+            if (loadedInterrupted.Length == 0)
+            {
+                return (0, 0);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
             var jobs = state.Jobs;
             var interrupted = jobs.Where(job => job.Status == TrickplayJobStatus.Generating).ToArray();
+            var requeued = 0;
+            var failed = 0;
             foreach (var job in interrupted)
             {
-                job.Status = TrickplayJobStatus.Queued;
-                job.StartedAtUtc = null;
-                job.ErrorMessage = "The server stopped during generation; the job was returned to the queue.";
+                if (job.AttemptCount >= MaximumInterruptedAttempts)
+                {
+                    job.Status = TrickplayJobStatus.Failed;
+                    job.FinishedAtUtc = DateTime.UtcNow;
+                    job.ErrorMessage = "Generation was interrupted too many times. Queue the item again to retry.";
+                    failed++;
+                }
+                else
+                {
+                    job.Status = TrickplayJobStatus.Queued;
+                    job.StartedAtUtc = null;
+                    job.FinishedAtUtc = null;
+                    job.ErrorMessage = "The server stopped during generation; the job was returned to the queue.";
+                    requeued++;
+                }
             }
 
-            if (interrupted.Length > 0)
-            {
-                await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
-            }
+            PruneLocked(jobs);
+            SynchronizeCompletedTotalIfNeeded(state);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
 
-            return interrupted.Length;
+            return (requeued, failed);
         }
         finally
         {
@@ -381,10 +434,23 @@ public sealed class TrickplayJobStore
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
-            var jobs = state.Jobs;
-            var job = jobs.FirstOrDefault(value => value.Id == jobId)
+            var loadedState = await LoadLockedAsync(cancellationToken).ConfigureAwait(false);
+            var loadedJob = loadedState.Jobs.FirstOrDefault(value => value.Id == jobId)
                 ?? throw new InvalidOperationException("The generation job no longer exists.");
+            if (loadedJob.Status == status)
+            {
+                return;
+            }
+
+            if (loadedJob.Status != TrickplayJobStatus.Generating)
+            {
+                throw new InvalidOperationException("Only a generating job can enter a terminal state.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = Copy(loadedState);
+            var jobs = state.Jobs;
+            var job = jobs.First(value => value.Id == jobId);
             job.Status = status;
             job.FinishedAtUtc = DateTime.UtcNow;
             job.ErrorMessage = errorMessage;
@@ -395,7 +461,7 @@ public sealed class TrickplayJobStore
 
             PruneLocked(jobs);
             SynchronizeCompletedTotalIfNeeded(state);
-            await SaveLockedAsync(state, cancellationToken).ConfigureAwait(false);
+            await CommitLockedAsync(state, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -411,50 +477,144 @@ public sealed class TrickplayJobStore
         }
 
         var path = GetStorePath();
+        var backupPath = GetBackupStorePath();
         if (!File.Exists(path))
         {
+            if (File.Exists(backupPath))
+            {
+                try
+                {
+                    _state = await ReadStateAsync(backupPath, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        File.Copy(backupPath, path, false);
+                        _primaryStoreTrusted = true;
+                    }
+                    catch (Exception restoreException) when (restoreException is IOException or UnauthorizedAccessException)
+                    {
+                        _primaryStoreTrusted = false;
+                        _logger.LogError(
+                            restoreException,
+                            "Recovered the JellyTPM job store in memory, but could not recreate its missing primary file.");
+                    }
+
+                    _logger.LogWarning(
+                        "Recovered the JellyTPM generation job store from its last-known-good backup because "
+                        + "the primary file was missing.");
+                    return _state;
+                }
+                catch (Exception backupException) when (backupException is JsonException or InvalidDataException)
+                {
+                    _logger.LogError(backupException, "The JellyTPM generation job-store backup is invalid.");
+                    QuarantineFile(backupPath);
+                }
+            }
+
             _state = new JobStoreState();
             return _state;
         }
 
         try
         {
-            await using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                4096,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            if (document.RootElement.ValueKind == JsonValueKind.Array)
-            {
-                var legacyJobs = document.RootElement.Deserialize<List<TrickplayJob>>(SerializerOptions) ?? [];
-                _state = new JobStoreState
-                {
-                    Jobs = legacyJobs,
-                    TotalCompleted = legacyJobs.Count(job => job.Status == TrickplayJobStatus.Completed)
-                };
-            }
-            else
-            {
-                _state = document.RootElement.Deserialize<JobStoreState>(SerializerOptions) ?? new JobStoreState();
-                _state.Jobs ??= [];
-            }
-
+            _state = await ReadStateAsync(path, cancellationToken).ConfigureAwait(false);
+            _primaryStoreTrusted = true;
+            RefreshBackupFromValidatedPrimary(path);
             return _state;
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (exception is JsonException or InvalidDataException)
         {
-            _logger.LogError(exception, "The JellyTPM generation job store is not valid JSON.");
-            throw new InvalidOperationException("The JellyTPM generation job store could not be read.", exception);
+            _primaryStoreTrusted = false;
+            _logger.LogError(exception, "The JellyTPM generation job store is invalid; attempting backup recovery.");
+            if (File.Exists(backupPath))
+            {
+                JobStoreState? recovered = null;
+                try
+                {
+                    recovered = await ReadStateAsync(backupPath, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception backupException) when (backupException is JsonException or InvalidDataException)
+                {
+                    _logger.LogError(backupException, "The JellyTPM generation job-store backup is also invalid.");
+                    QuarantineFile(backupPath);
+                }
+
+                if (recovered is not null)
+                {
+                    QuarantineFile(path);
+                    try
+                    {
+                        File.Copy(backupPath, path, true);
+                        _primaryStoreTrusted = true;
+                    }
+                    catch (Exception restoreException) when (restoreException is IOException or UnauthorizedAccessException)
+                    {
+                        _primaryStoreTrusted = false;
+                        _logger.LogError(
+                            restoreException,
+                            "Recovered the JellyTPM job store in memory, but could not restore its primary file.");
+                    }
+
+                    _state = recovered;
+                    _logger.LogWarning("Recovered the JellyTPM generation job store from its last-known-good backup.");
+                    return _state;
+                }
+            }
+
+            QuarantineFile(path);
+            _state = new JobStoreState();
+            _logger.LogError(
+                "JellyTPM started with an empty generation queue because no valid job-store backup was available. "
+                + "Corrupt files were preserved for inspection.");
+            return _state;
         }
     }
 
-    private async Task SaveLockedAsync(JobStoreState state, CancellationToken cancellationToken)
+    private async Task<JobStoreState> ReadStateAsync(string path, CancellationToken cancellationToken)
+    {
+        var fileLength = new FileInfo(path).Length;
+        if (fileLength > MaximumStoreFileSize)
+        {
+            throw new InvalidDataException(
+                $"The JellyTPM generation job store exceeds the {MaximumStoreFileSize / (1024 * 1024)} MB safety limit.");
+        }
+
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            4096,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        JobStoreState state;
+        if (document.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            var legacyJobs = document.RootElement.Deserialize<List<TrickplayJob>>(SerializerOptions) ?? [];
+            state = new JobStoreState
+            {
+                Jobs = legacyJobs,
+                TotalCompleted = legacyJobs.Count(job => job is not null && job.Status == TrickplayJobStatus.Completed)
+            };
+        }
+        else if (document.RootElement.ValueKind == JsonValueKind.Object)
+        {
+            state = document.RootElement.Deserialize<JobStoreState>(SerializerOptions)
+                ?? throw new InvalidDataException("The JellyTPM generation job store contains no state object.");
+        }
+        else
+        {
+            throw new InvalidDataException("The JellyTPM generation job store must contain an object or legacy job array.");
+        }
+
+        NormalizeLoadedState(state);
+        return state;
+    }
+
+    private async Task CommitLockedAsync(JobStoreState state, CancellationToken cancellationToken)
     {
         var path = GetStorePath();
+        var backupPath = GetBackupStorePath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporaryPath = path + ".tmp";
         try
@@ -472,7 +632,30 @@ public sealed class TrickplayJobStore
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(temporaryPath, path, true);
+            if (new FileInfo(temporaryPath).Length > MaximumStoreFileSize)
+            {
+                throw new InvalidDataException(
+                    $"The JellyTPM generation job store exceeds the {MaximumStoreFileSize / (1024 * 1024)} MB safety limit.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var refreshBackup = false;
+            if (_primaryStoreTrusted && File.Exists(path))
+            {
+                File.Replace(temporaryPath, path, backupPath, true);
+            }
+            else
+            {
+                File.Move(temporaryPath, path, true);
+                refreshBackup = true;
+            }
+
+            _primaryStoreTrusted = true;
+            _state = state;
+            if (refreshBackup)
+            {
+                RefreshBackupFromValidatedPrimary(path);
+            }
         }
         finally
         {
@@ -481,6 +664,94 @@ public sealed class TrickplayJobStore
                 File.Delete(temporaryPath);
             }
         }
+    }
+
+    private void QuarantineFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path)!;
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ", System.Globalization.CultureInfo.InvariantCulture);
+        var quarantinePath = Path.Combine(directory, $"{fileName}.corrupt-{timestamp}-{Guid.NewGuid():N}{extension}");
+        try
+        {
+            File.Move(path, quarantinePath);
+            _logger.LogWarning("Preserved an invalid JellyTPM job-store file as {QuarantineFileName}.", Path.GetFileName(quarantinePath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(exception, "Unable to quarantine invalid JellyTPM job-store file {FileName}.", Path.GetFileName(path));
+        }
+    }
+
+    private void RefreshBackupFromValidatedPrimary(string primaryPath)
+    {
+        var backupPath = GetBackupStorePath();
+        try
+        {
+            File.Copy(primaryPath, backupPath, true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Unable to refresh the JellyTPM job-store backup.");
+        }
+    }
+
+    private static void NormalizeLoadedState(JobStoreState state)
+    {
+        var jobs = state.Jobs;
+        if (jobs is null || jobs.Any(job => job is null))
+        {
+            throw new InvalidDataException("The JellyTPM generation job store contains a null jobs value or job record.");
+        }
+
+        if (jobs.Count > MaximumAllowedActiveJobs + 500)
+        {
+            throw new InvalidDataException("The JellyTPM generation job store contains too many records.");
+        }
+
+        var jobIds = new HashSet<Guid>();
+        foreach (var job in jobs)
+        {
+            if (job.Id == Guid.Empty
+                || job.ItemId == Guid.Empty
+                || !jobIds.Add(job.Id)
+                || !Enum.IsDefined(job.Operation)
+                || !Enum.IsDefined(job.Status))
+            {
+                throw new InvalidDataException("The JellyTPM generation job store contains an invalid job record.");
+            }
+
+            job.ItemName ??= string.Empty;
+            job.ParentTitle ??= string.Empty;
+            job.SeasonName ??= string.Empty;
+            job.LibraryName ??= string.Empty;
+            job.ErrorMessage ??= string.Empty;
+            job.AttemptCount = Math.Clamp(job.AttemptCount, 0, MaximumInterruptedAttempts);
+        }
+
+        state.TotalCompleted = Math.Max(0, state.TotalCompleted);
+    }
+
+    private static bool RequiresMaintenance(JobStoreState state)
+    {
+        var retentionDays = Math.Clamp(Plugin.Instance?.Configuration.JobHistoryRetentionDays ?? 30, 1, 365);
+        var cutoff = DateTime.UtcNow.AddDays(-retentionDays);
+        var maximumRetained = Math.Clamp(Plugin.Instance?.Configuration.MaximumRetainedJobs ?? 50, 1, 500);
+        return state.Jobs.Any(job => IsTerminal(job) && job.FinishedAtUtc < cutoff)
+            || state.Jobs.Count(IsTerminal) > maximumRetained
+            || WouldSynchronizeCompletedTotal(state);
+    }
+
+    private static bool WouldSynchronizeCompletedTotal(JobStoreState state)
+    {
+        return !(Plugin.Instance?.Configuration.PreserveCompletedCount ?? true)
+            && state.TotalCompleted != state.Jobs.Count(job => job.Status == TrickplayJobStatus.Completed);
     }
 
     private static void PruneLocked(List<TrickplayJob> jobs)
@@ -571,9 +842,24 @@ public sealed class TrickplayJobStore
         };
     }
 
+    private static JobStoreState Copy(JobStoreState state)
+    {
+        return new JobStoreState
+        {
+            Jobs = state.Jobs.Select(Copy).ToList(),
+            TotalCompleted = state.TotalCompleted
+        };
+    }
+
     private static string GetStorePath()
     {
         return Plugin.Instance?.GetDataFilePath(StoreFileName)
+            ?? throw new InvalidOperationException("JellyTPM is not initialized.");
+    }
+
+    private static string GetBackupStorePath()
+    {
+        return Plugin.Instance?.GetDataFilePath(StoreBackupFileName)
             ?? throw new InvalidOperationException("JellyTPM is not initialized.");
     }
 
