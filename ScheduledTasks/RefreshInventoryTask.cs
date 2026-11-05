@@ -48,6 +48,10 @@ public sealed class RefreshInventoryTask : IScheduledTask, IConfigurableSchedule
         [
             new TaskTriggerInfo
             {
+                Type = TaskTriggerInfoType.StartupTrigger
+            },
+            new TaskTriggerInfo
+            {
                 Type = TaskTriggerInfoType.DailyTrigger,
                 TimeOfDayTicks = TimeSpan.FromHours(4).Ticks
             }

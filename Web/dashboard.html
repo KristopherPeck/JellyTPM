@@ -352,7 +352,7 @@
                     if (inventoryHasSnapshot) {
                         loadItems(false);
                     } else {
-                        setMessage('The item inventory will be available after the server finishes its first refresh.', false);
+                        setMessage('No completed inventory snapshot is available. Run the JellyTPM scheduled task or select Refresh inventory.', false);
                     }
                 }
                 if (activeTab === 'queue') { loadJobs(true, true); }
@@ -524,11 +524,16 @@
                             return null;
                         }
 
-                        if (!status.hasSnapshot || status.isSnapshotStale) {
-                            return startInventoryRefresh();
+                        if (!status.hasSnapshot) {
+                            showInventoryRefreshStatus(status);
+                            setMessage('No completed inventory snapshot is available. Run the JellyTPM scheduled task or select Refresh inventory.', false);
+                            return null;
                         }
 
                         showInventoryRefreshStatus(status);
+                        if (status.isSnapshotStale) {
+                            setMessage('The inventory snapshot may be stale. Run the JellyTPM scheduled task or select Refresh inventory to reconcile it.', false);
+                        }
                         return null;
                     });
                 }).catch(function (error) {
@@ -869,6 +874,11 @@
             }
 
             function loadItems(refresh) {
+                if (!inventoryHasSnapshot) {
+                    setMessage('No completed inventory snapshot is available. Run the JellyTPM scheduled task or select Refresh inventory.', false);
+                    return Promise.resolve();
+                }
+
                 setMessage('Loading item inventory...', false);
                 return api(itemQuery(refresh)).then(function (result) {
                     renderItems(result);

@@ -71,9 +71,9 @@ Regenerate is available from the Preview dialog when an item already has trickpl
 
 Jellyfin does not expose reliable numeric per-file trickplay progress to plugins, so JellyTPM reports lifecycle states: Queued, Generating, Completed, Failed, or Cancelled.
 
-Inventory refreshes also run on the Jellyfin server. Administrators can leave the dashboard while a scan is running and return later; the previous completed snapshot remains available until the replacement finishes successfully.
+Inventory refreshes run through Jellyfin's Scheduled Tasks system. Administrators can leave the dashboard while a scan is running and return later; the previous completed snapshot remains available until the replacement finishes successfully. The last successful snapshot is also restored as stale data after a server restart, so the dashboard does not need to remain empty while the startup task reconciles it. Opening the JellyTPM dashboard does not start a scan.
 
-JellyTPM adds **Refresh JellyTPM inventory** under Jellyfin's Scheduled Tasks with a default daily trigger at 4:00 AM server time. Administrators can change or remove that trigger in Jellyfin. Verified JellyTPM generation results update the affected cached item and coverage counters immediately; scheduled and manual full scans reconcile changes made outside JellyTPM.
+JellyTPM adds **Refresh JellyTPM inventory** under Jellyfin's Scheduled Tasks with default application-startup and daily 4:00 AM server-time triggers. Jellyfin applies these defaults only when no saved trigger configuration exists, so plugin updates do not overwrite an administrator's schedule. The dashboard's **Refresh inventory** button runs the same visible scheduled task. Administrators can change or remove its triggers in Jellyfin. Verified JellyTPM generation results update the affected cached item and coverage counters immediately; scheduled and manual full scans reconcile changes made outside JellyTPM.
 
 ## Queue and history settings
 

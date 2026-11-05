@@ -4,9 +4,15 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Persisted the last successful inventory snapshot so coverage remains available as stale data while the startup task refreshes it after a reboot.
+
 ### Changed
 
 - Removed redundant page headings beneath the Overview, Items, Generation Queue, and Settings tabs.
+- Unified startup, daily, and dashboard-requested inventory scans under Jellyfin's visible Scheduled Task, with startup and daily 4:00 AM defaults for new task configurations.
+- Stopped dashboard loads from silently starting inventory scans when a snapshot is missing or stale.
 
 ## [0.6.0.0] - 2026-11-03
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
@@ -20,8 +21,16 @@ namespace Jellyfin.Plugin.JellyTPM.Services;
 /// </summary>
 public sealed class TrickplayInventoryService : BackgroundService
 {
+    private const string SnapshotFileName = "inventory-snapshot.json";
+    private const int SnapshotSchemaVersion = 1;
     private const int LibraryQueryPageSize = 500;
     private const int TrickplayQueryPageSize = 1000;
+    private const int MaximumPersistedItems = 1_000_000;
+    private const long MaximumSnapshotFileSize = 256 * 1024 * 1024;
+    private static readonly JsonSerializerOptions SnapshotSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     private readonly ILibraryManager _libraryManager;
     private readonly ITrickplayManager _trickplayManager;
@@ -55,6 +64,13 @@ public sealed class TrickplayInventoryService : BackgroundService
         _trickplayManager = trickplayManager;
         _serverConfigurationManager = serverConfigurationManager;
         _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        await TryLoadPersistedSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets server and library coverage totals.</summary>
@@ -134,18 +150,8 @@ public sealed class TrickplayInventoryService : BackgroundService
         return snapshot.Items.FirstOrDefault(item => item.Id == itemId);
     }
 
-    /// <summary>Queues one server-side inventory refresh, coalescing duplicate requests.</summary>
-    public TrickplayInventoryRefreshStatus RequestRefresh()
-    {
-        lock (_refreshStateLock)
-        {
-            EnsureRefreshRequested();
-            return CreateRefreshStatus();
-        }
-    }
-
     /// <summary>
-    /// Queues or joins the current server-side refresh and waits for it to finish.
+    /// Runs or joins the current scheduled refresh and waits for it to finish.
     /// </summary>
     public async Task RefreshAndWaitAsync(
         IProgress<double> progress,
@@ -415,7 +421,9 @@ public sealed class TrickplayInventoryService : BackgroundService
         try
         {
             var cached = _snapshot;
-            if (cached is not null && !ReferenceEquals(cached, observedSnapshot))
+            if (cached is not null
+                && !ReferenceEquals(cached, observedSnapshot)
+                && !_snapshotInvalidated)
             {
                 return cached;
             }
@@ -423,6 +431,7 @@ public sealed class TrickplayInventoryService : BackgroundService
             _logger.LogInformation("Building JellyTPM trickplay inventory snapshot in the server-side worker.");
             var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
             var snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            await TryPersistSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
             _snapshot = snapshot;
             _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
             return snapshot;
@@ -525,7 +534,9 @@ public sealed class TrickplayInventoryService : BackgroundService
             {
                 _logger.LogInformation("Building JellyTPM trickplay inventory snapshot.");
                 var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
-                _snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                var snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                await TryPersistSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+                _snapshot = snapshot;
                 _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
                 return _snapshot;
             }
@@ -1076,6 +1087,217 @@ public sealed class TrickplayInventoryService : BackgroundService
             : Math.Round(100d * numerator / denominator, 1, MidpointRounding.AwayFromZero);
     }
 
+    private async Task TryLoadPersistedSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var path = Plugin.Instance?.GetDataFilePath(SnapshotFileName);
+        if (path is null || !File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length <= 0 || fileInfo.Length > MaximumSnapshotFileSize)
+            {
+                throw new InvalidDataException(
+                    $"The persisted inventory snapshot size of {fileInfo.Length} bytes is invalid.");
+            }
+
+            await using var stream = new FileStream(
+                path,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.Open,
+                    Access = FileAccess.Read,
+                    Share = FileShare.Read,
+                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan
+                });
+            var persisted = await JsonSerializer
+                .DeserializeAsync<PersistedInventorySnapshot>(
+                    stream,
+                    SnapshotSerializerOptions,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsValidPersistedSnapshot(persisted))
+            {
+                throw new InvalidDataException("The persisted inventory snapshot failed validation.");
+            }
+
+            _snapshot = new InventorySnapshot
+            {
+                GeneratedAtUtc = persisted!.GeneratedAtUtc,
+                Summary = persisted.Summary!,
+                Items = persisted.Items!
+            };
+            _snapshotInvalidated = true;
+            _logger.LogInformation(
+                "Restored stale JellyTPM inventory snapshot for {ItemCount} items generated at {GeneratedAtUtc}.",
+                persisted.Items!.Length,
+                persisted.GeneratedAtUtc);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Unable to restore the persisted JellyTPM inventory snapshot; a scheduled refresh will rebuild it.");
+            QuarantineInvalidSnapshot(path);
+        }
+    }
+
+    private async Task TryPersistSnapshotAsync(
+        InventorySnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var plugin = Plugin.Instance;
+        if (plugin is null)
+        {
+            return;
+        }
+
+        var path = plugin.GetDataFilePath(SnapshotFileName);
+        var temporaryPath = plugin.GetDataFilePath($"inventory-snapshot.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await using (var stream = new FileStream(
+                temporaryPath,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.None,
+                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.WriteThrough
+                }))
+            {
+                var persisted = new PersistedInventorySnapshot
+                {
+                    SchemaVersion = SnapshotSchemaVersion,
+                    GeneratedAtUtc = snapshot.GeneratedAtUtc,
+                    Summary = snapshot.Summary,
+                    Items = snapshot.Items
+                };
+                await JsonSerializer
+                    .SerializeAsync(
+                        stream,
+                        persisted,
+                        SnapshotSerializerOptions,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (stream.Length > MaximumSnapshotFileSize)
+                {
+                    throw new InvalidDataException(
+                        $"The inventory snapshot exceeds the {MaximumSnapshotFileSize}-byte cache limit.");
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(path))
+            {
+                File.Replace(temporaryPath, path, null, true);
+            }
+            else
+            {
+                File.Move(temporaryPath, path);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Unable to persist the completed JellyTPM inventory snapshot; the in-memory snapshot remains available.");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(exception, "Unable to remove temporary inventory snapshot {Path}.", temporaryPath);
+            }
+        }
+    }
+
+    private static bool IsValidPersistedSnapshot(PersistedInventorySnapshot? persisted)
+    {
+        if (persisted is null
+            || persisted.SchemaVersion != SnapshotSchemaVersion
+            || persisted.GeneratedAtUtc == default
+            || persisted.Summary is null
+            || persisted.Items is null
+            || persisted.Items.Length > MaximumPersistedItems
+            || persisted.Summary.GeneratedAtUtc != persisted.GeneratedAtUtc
+            || persisted.Summary.TotalItems != persisted.Items.Length
+            || persisted.Summary.ConfiguredWidths is null
+            || persisted.Summary.Libraries is null)
+        {
+            return false;
+        }
+
+        var itemIds = new HashSet<Guid>();
+        foreach (var item in persisted.Items)
+        {
+            if (item is null
+                || item.Id == Guid.Empty
+                || item.LibraryId == Guid.Empty
+                || !itemIds.Add(item.Id)
+                || item.LibraryName is null
+                || item.Name is null
+                || item.ItemType is null
+                || item.ParentTitle is null
+                || item.SeasonName is null
+                || item.ExtraType is null
+                || item.EligibilityReason is null
+                || item.StatusLabel is null
+                || item.ExpectedWidths is null
+                || item.Resolutions is null
+                || !Enum.IsDefined(item.Status)
+                || item.Resolutions.Any(resolution => resolution is null))
+            {
+                return false;
+            }
+        }
+
+        return persisted.Summary.Libraries.All(library =>
+            library is not null
+            && library.Id != Guid.Empty
+            && library.Name is not null
+            && library.CollectionType is not null);
+    }
+
+    private void QuarantineInvalidSnapshot(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var quarantineName = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "inventory-snapshot.invalid.{0:yyyyMMddHHmmssfff}.{1:N}.json",
+                DateTime.UtcNow,
+                Guid.NewGuid());
+            File.Move(path, Plugin.Instance!.GetDataFilePath(quarantineName));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Unable to quarantine invalid inventory snapshot {Path}.", path);
+        }
+    }
+
     private sealed class InventorySnapshot
     {
         public DateTime GeneratedAtUtc { get; init; }
@@ -1083,6 +1305,17 @@ public sealed class TrickplayInventoryService : BackgroundService
         public TrickplayInventorySummary Summary { get; init; } = new();
 
         public TrickplayItemSummary[] Items { get; init; } = [];
+    }
+
+    private sealed class PersistedInventorySnapshot
+    {
+        public int SchemaVersion { get; init; }
+
+        public DateTime GeneratedAtUtc { get; init; }
+
+        public TrickplayInventorySummary? Summary { get; init; }
+
+        public TrickplayItemSummary[]? Items { get; init; }
     }
 
     private sealed class ItemContext

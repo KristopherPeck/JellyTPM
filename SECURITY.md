@@ -39,7 +39,9 @@ Trickplay generation invokes Jellyfin's native processing pipeline and can consu
 
 Jobs interrupted by a server stop are returned to the queue. After three interrupted attempts, JellyTPM marks the job failed so a repeatedly disruptive item cannot restart automatically forever; an administrator can queue the item again after investigating the server log.
 
-Inventory refreshes query every inventoried video and can place sustained load on Jellyfin's database for large libraries. Refreshes continue in the server-side worker after the initiating administrator leaves the dashboard. JellyTPM also supplies a configurable daily scheduled refresh; administrators should choose an off-hours trigger appropriate for their server.
+Inventory refreshes query every inventoried video and can place sustained load on Jellyfin's database for large libraries. Refreshes run as Jellyfin Scheduled Tasks and continue after the initiating administrator leaves the dashboard. New task configurations default to application-startup and daily 4:00 AM server-time triggers; administrators should choose triggers appropriate for their server or remove the startup trigger when startup load is undesirable.
+
+The last successful inventory snapshot is stored in the JellyTPM plugin data directory and contains Jellyfin item identifiers and display metadata, but no media paths. Snapshot writes use a temporary file and atomic replacement. Oversized, malformed, or unsupported snapshots are not loaded and are quarantined for administrator inspection before a scheduled task rebuilds the cache.
 
 Only install JellyTPM releases built for the server ABI stated in the manifest. Validate the release archive and its published checksums before distribution.
 

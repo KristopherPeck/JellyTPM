@@ -1,5 +1,7 @@
 using Jellyfin.Plugin.JellyTPM.Models;
+using Jellyfin.Plugin.JellyTPM.ScheduledTasks;
 using Jellyfin.Plugin.JellyTPM.Services;
+using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -17,16 +19,19 @@ public sealed class JellyTPMController : ControllerBase
 {
     private readonly TrickplayInventoryService _inventoryService;
     private readonly TrickplayQueueService _queueService;
+    private readonly ITaskManager _taskManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JellyTPMController"/> class.
     /// </summary>
     public JellyTPMController(
         TrickplayInventoryService inventoryService,
-        TrickplayQueueService queueService)
+        TrickplayQueueService queueService,
+        ITaskManager taskManager)
     {
         _inventoryService = inventoryService;
         _queueService = queueService;
+        _taskManager = taskManager;
     }
 
     /// <summary>Gets server-wide and per-library trickplay coverage.</summary>
@@ -49,12 +54,13 @@ public sealed class JellyTPMController : ControllerBase
         return Ok(_inventoryService.GetRefreshStatus());
     }
 
-    /// <summary>Queues a server-side inventory refresh without tying it to this request.</summary>
+    /// <summary>Runs the visible JellyTPM inventory scheduled task.</summary>
     [HttpPost("Refresh")]
     [ProducesResponseType<TrickplayInventoryRefreshStatus>(StatusCodes.Status202Accepted)]
     public ActionResult<TrickplayInventoryRefreshStatus> StartRefresh()
     {
-        return Accepted(_inventoryService.RequestRefresh());
+        _taskManager.Execute<RefreshInventoryTask>();
+        return Accepted(_inventoryService.GetRefreshStatus());
     }
 
     /// <summary>Gets a filtered and server-paged item inventory.</summary>
