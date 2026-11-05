@@ -4,6 +4,8 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0.0] - 2026-11-04
+
 ### Added
 
 - Persisted the last successful inventory snapshot so coverage remains available as stale data while the startup task refreshes it after a reboot.

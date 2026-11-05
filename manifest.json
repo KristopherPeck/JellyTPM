@@ -9,6 +9,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.7.0.0",
+        "changelog": "Beta 7 unifies inventory refreshes under Jellyfin Scheduled Tasks, persists snapshots across restarts, and adds weighted refresh progress.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.7.0.0/JellyTPM_0.7.0.0.zip",
+        "checksum": "E4BCC3D98465380A18967838AE30616B",
+        "timestamp": "2026-11-05T00:33:42Z"
+      },
+      {
         "version": "0.6.0.0",
         "changelog": "Beta 6 stabilizes dashboard status messaging and hardens generation queue persistence, crash recovery, and interrupted-job handling.",
         "targetAbi": "12.4.0.0",
