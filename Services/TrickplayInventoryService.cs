@@ -48,6 +48,7 @@ public sealed class TrickplayInventoryService : BackgroundService
     private DateTime? _refreshCompletedAtUtc;
     private string _refreshErrorMessage = string.Empty;
     private InventorySnapshot? _refreshObservedSnapshot;
+    private IProgress<double>? _refreshProgress;
     private TaskCompletionSource<bool>? _refreshCompletion;
     private CancellationTokenSource? _refreshCancellation;
 
@@ -157,14 +158,14 @@ public sealed class TrickplayInventoryService : BackgroundService
         IProgress<double> progress,
         CancellationToken cancellationToken)
     {
+        progress.Report(0);
         Task<bool> completion;
         lock (_refreshStateLock)
         {
-            EnsureRefreshRequested();
+            EnsureRefreshRequested(progress);
             completion = _refreshCompletion!.Task;
         }
 
-        progress.Report(0);
         using var cancellationRegistration = cancellationToken.Register(CancelCurrentRefresh);
         var succeeded = await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
         if (!succeeded)
@@ -326,11 +327,13 @@ public sealed class TrickplayInventoryService : BackgroundService
     private async Task ProcessQueuedRefreshAsync(CancellationToken stoppingToken)
     {
         InventorySnapshot? observedSnapshot;
+        IProgress<double>? progress;
         TaskCompletionSource<bool> completion;
         CancellationTokenSource refreshCancellation;
         lock (_refreshStateLock)
         {
             observedSnapshot = _refreshObservedSnapshot;
+            progress = _refreshProgress;
             completion = _refreshCompletion!;
             refreshCancellation = _refreshCancellation!;
         }
@@ -340,7 +343,10 @@ public sealed class TrickplayInventoryService : BackgroundService
             refreshCancellation.Token);
         try
         {
-            var snapshot = await RefreshInBackgroundAsync(observedSnapshot, linkedCancellation.Token)
+            var snapshot = await RefreshInBackgroundAsync(
+                    observedSnapshot,
+                    progress,
+                    linkedCancellation.Token)
                 .ConfigureAwait(false);
             CompleteRefresh(string.Empty);
             completion.TrySetResult(true);
@@ -372,10 +378,11 @@ public sealed class TrickplayInventoryService : BackgroundService
         }
     }
 
-    private void EnsureRefreshRequested()
+    private void EnsureRefreshRequested(IProgress<double> progress)
     {
         if (_refreshInProgress)
         {
+            _refreshProgress ??= progress;
             return;
         }
 
@@ -384,6 +391,7 @@ public sealed class TrickplayInventoryService : BackgroundService
         _refreshCompletedAtUtc = null;
         _refreshErrorMessage = string.Empty;
         _refreshObservedSnapshot = _snapshot;
+        _refreshProgress = progress;
         _refreshCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _refreshCancellation = new CancellationTokenSource();
         _refreshSignal.Release();
@@ -408,6 +416,7 @@ public sealed class TrickplayInventoryService : BackgroundService
             _refreshCompletedAtUtc = DateTime.UtcNow;
             _refreshErrorMessage = errorMessage;
             _refreshObservedSnapshot = null;
+            _refreshProgress = null;
             _refreshCompletion = null;
             _refreshCancellation = null;
         }
@@ -415,6 +424,7 @@ public sealed class TrickplayInventoryService : BackgroundService
 
     private async Task<InventorySnapshot> RefreshInBackgroundAsync(
         InventorySnapshot? observedSnapshot,
+        IProgress<double>? progress,
         CancellationToken cancellationToken)
     {
         await _snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -430,8 +440,14 @@ public sealed class TrickplayInventoryService : BackgroundService
 
             _logger.LogInformation("Building JellyTPM trickplay inventory snapshot in the server-side worker.");
             var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
-            var snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            var snapshot = await BuildSnapshotAsync(
+                    progress,
+                    observedSnapshot?.Summary.Libraries,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            progress?.Report(98);
             await TryPersistSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            progress?.Report(99);
             _snapshot = snapshot;
             _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
             return snapshot;
@@ -534,7 +550,7 @@ public sealed class TrickplayInventoryService : BackgroundService
             {
                 _logger.LogInformation("Building JellyTPM trickplay inventory snapshot.");
                 var changeVersion = Volatile.Read(ref _snapshotChangeVersion);
-                var snapshot = await BuildSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                var snapshot = await BuildSnapshotAsync(null, null, cancellationToken).ConfigureAwait(false);
                 await TryPersistSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
                 _snapshot = snapshot;
                 _snapshotInvalidated = Volatile.Read(ref _snapshotChangeVersion) != changeVersion;
@@ -556,9 +572,13 @@ public sealed class TrickplayInventoryService : BackgroundService
         }
     }
 
-    private async Task<InventorySnapshot> BuildSnapshotAsync(CancellationToken cancellationToken)
+    private async Task<InventorySnapshot> BuildSnapshotAsync(
+        IProgress<double>? progress,
+        IReadOnlyCollection<TrickplayLibrarySummary>? previousLibraries,
+        CancellationToken cancellationToken)
     {
         var snapshotStopwatch = Stopwatch.StartNew();
+        progress?.Report(2);
         var trickplayOptions = _serverConfigurationManager.Configuration.TrickplayOptions;
         var configuredWidths = (trickplayOptions.WidthResolutions ?? [])
             .Where(width => width > 0)
@@ -568,27 +588,40 @@ public sealed class TrickplayInventoryService : BackgroundService
             .Order()
             .ToArray();
         var trickplayByItem = await LoadTrickplayInfoAsync(cancellationToken).ConfigureAwait(false);
+        progress?.Report(10);
         var includeExtras = Plugin.Instance?.Configuration.IncludeExtras ?? false;
         var itemRows = new List<TrickplayItemSummary>();
         var libraryRows = new List<TrickplayLibrarySummary>();
 
-        foreach (var folder in _libraryManager.GetVirtualFolders()
-                     .OrderBy(folder => folder.Name, StringComparer.OrdinalIgnoreCase))
+        var folders = _libraryManager.GetVirtualFolders()
+            .Where(folder => folder.CollectionType is not (CollectionTypeOptions.boxsets
+                or CollectionTypeOptions.music
+                or CollectionTypeOptions.books))
+            .Where(folder => Guid.TryParse(folder.ItemId, out _))
+            .OrderBy(folder => folder.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var previousItemCounts = (previousLibraries ?? [])
+            .ToDictionary(library => library.Id, library => Math.Max(1, library.TotalItems));
+        var fallbackWeight = previousItemCounts.Count == 0
+            ? 1d
+            : previousItemCounts.Values.Average();
+        var libraryWeights = folders.ToDictionary(
+            folder => Guid.Parse(folder.ItemId),
+            folder => previousItemCounts.GetValueOrDefault(
+                Guid.Parse(folder.ItemId),
+                Math.Max(1, (int)Math.Round(fallbackWeight))));
+        var totalLibraryWeight = Math.Max(1d, libraryWeights.Values.Sum());
+        var completedLibraryWeight = 0d;
+
+        foreach (var folder in folders)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (folder.CollectionType is CollectionTypeOptions.boxsets
-                or CollectionTypeOptions.music
-                or CollectionTypeOptions.books)
-            {
-                // Synthetic collections duplicate linked source items, while audio and book
-                // libraries are outside the scope of a native video trickplay dashboard.
-                continue;
-            }
-
-            if (!Guid.TryParse(folder.ItemId, out var libraryId))
-            {
-                continue;
-            }
+            var libraryId = Guid.Parse(folder.ItemId);
+            var libraryWeight = libraryWeights[libraryId];
+            var libraryProgressStart = 10d + (85d * completedLibraryWeight / totalLibraryWeight);
+            var libraryProgressEnd = 10d
+                + (85d * (completedLibraryWeight + libraryWeight) / totalLibraryWeight);
+            var previousItemCount = previousItemCounts.GetValueOrDefault(libraryId);
 
             var options = folder.LibraryOptions ?? new LibraryOptions();
             var libraryQueryElapsed = TimeSpan.Zero;
@@ -596,6 +629,15 @@ public sealed class TrickplayInventoryService : BackgroundService
             var libraryItems = LoadLibraryVideos(
                     libraryId,
                     elapsed => libraryQueryElapsed += elapsed,
+                    processedItems =>
+                    {
+                        var fraction = previousItemCount > 0
+                            ? Math.Min(0.95d, (double)processedItems / previousItemCount)
+                            : 1d - Math.Exp(-(double)processedItems / 5000d);
+                        progress?.Report(
+                            libraryProgressStart
+                            + ((libraryProgressEnd - libraryProgressStart) * fraction));
+                    },
                     cancellationToken)
                 .Select(video => BuildItem(
                     video,
@@ -619,6 +661,8 @@ public sealed class TrickplayInventoryService : BackgroundService
                 folder.Name ?? string.Empty,
                 libraryItems.Length,
                 inventoryConstructionElapsed.TotalSeconds);
+            completedLibraryWeight += libraryWeight;
+            progress?.Report(libraryProgressEnd);
 
             if (libraryItems.Length == 0)
             {
@@ -645,6 +689,7 @@ public sealed class TrickplayInventoryService : BackgroundService
         var partial = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Partial);
         var missing = enabledEligibleItems.Count(item => item.Status == TrickplayInventoryStatus.Missing);
         var eligible = enabledEligibleItems.Length;
+        progress?.Report(96);
 
         var completedAtUtc = DateTime.UtcNow;
         var snapshot = new InventorySnapshot
@@ -723,6 +768,7 @@ public sealed class TrickplayInventoryService : BackgroundService
     private IEnumerable<Video> LoadLibraryVideos(
         Guid libraryId,
         Action<TimeSpan> recordQueryElapsed,
+        Action<int> reportItemsLoaded,
         CancellationToken cancellationToken)
     {
         var startIndex = 0;
@@ -746,6 +792,7 @@ public sealed class TrickplayInventoryService : BackgroundService
             var page = _libraryManager.GetItemList(query).OfType<Video>().ToArray();
             queryStopwatch.Stop();
             recordQueryElapsed(queryStopwatch.Elapsed);
+            reportItemsLoaded(startIndex + page.Length);
             foreach (var video in page)
             {
                 yield return video;
@@ -1269,9 +1316,11 @@ public sealed class TrickplayInventoryService : BackgroundService
             }
         }
 
+        var libraryIds = new HashSet<Guid>();
         return persisted.Summary.Libraries.All(library =>
             library is not null
             && library.Id != Guid.Empty
+            && libraryIds.Add(library.Id)
             && library.Name is not null
             && library.CollectionType is not null);
     }

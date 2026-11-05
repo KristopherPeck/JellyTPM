@@ -7,6 +7,7 @@ All notable changes to JellyTPM will be documented in this file.
 ### Added
 
 - Persisted the last successful inventory snapshot so coverage remains available as stale data while the startup task refreshes it after a reboot.
+- Added weighted, page-level progress reporting to the Jellyfin inventory Scheduled Task.
 
 ### Changed
 
