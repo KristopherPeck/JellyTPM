@@ -30,6 +30,16 @@
         .jt-table { width: 100%; border-collapse: collapse; }
         .jt-table th, .jt-table td { padding: .7em; border-bottom: 1px solid rgba(255,255,255,.12); text-align: left; vertical-align: top; }
         .jt-table th { white-space: nowrap; }
+        .jt-items-table { min-width: 74.5rem; table-layout: fixed; }
+        .jt-items-table .jt-col-title, .jt-items-table .jt-col-context { width: 14rem; }
+        .jt-items-table .jt-col-library { width: 9rem; }
+        .jt-items-table .jt-col-status { width: 8rem; }
+        .jt-items-table .jt-col-width { width: 6.5rem; }
+        .jt-items-table .jt-col-thumbnails { width: 6rem; }
+        .jt-items-table .jt-col-actions { width: 10.5rem; }
+        .jt-items-table tbody tr { height: 4.5rem; }
+        .jt-items-table tbody td { height: 4.5rem; vertical-align: middle; }
+        .jt-cell-clamp { display: -webkit-box; max-height: 2.7em; overflow: hidden; line-height: 1.35; overflow-wrap: anywhere; white-space: pre-line; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
         .jt-progress { min-width: 10em; }
         .jt-progress progress { width: 100%; }
         .jt-status { display: inline-block; padding: .2em .55em; border-radius: 1em; background: rgba(255,255,255,.12); white-space: nowrap; }
@@ -45,8 +55,9 @@
         progress.jt-progress-complete::-moz-progress-bar { background-color: #00b86b; }
         .jt-pager { display: flex; justify-content: center; align-items: center; gap: 1em; margin: 1.25em 0; }
         .jt-page-info { min-width: 12em; text-align: center; }
+        .jt-items-pager button { box-sizing: border-box; width: 7rem; min-width: 7rem !important; margin: 0; text-align: center; }
         .jt-widths { white-space: nowrap; }
-        .jt-context { min-width: 12em; white-space: pre-line; }
+        .jt-context { white-space: pre-line; }
         .jt-actions { white-space: nowrap; }
         .jt-actions button + button { margin-left: .5em; }
         .jt-item-actions { min-width: 9.5rem; }
@@ -163,7 +174,17 @@
                 </div>
 
                 <div class="jt-table-wrap">
-                    <table class="jt-table">
+                    <table class="jt-table jt-items-table">
+                        <colgroup>
+                            <col class="jt-col-title">
+                            <col class="jt-col-context">
+                            <col class="jt-col-library">
+                            <col class="jt-col-status">
+                            <col class="jt-col-width jt-hide-small">
+                            <col class="jt-col-width">
+                            <col class="jt-col-thumbnails jt-hide-small">
+                            <col class="jt-col-actions">
+                        </colgroup>
                         <thead>
                         <tr>
                             <th>Title</th>
@@ -179,7 +200,7 @@
                         <tbody id="itemRows"></tbody>
                     </table>
                 </div>
-                <div class="jt-pager" aria-label="Item pages">
+                <div class="jt-pager jt-items-pager" aria-label="Item pages">
                     <button is="emby-button" type="button" class="raised" id="previousItems">Previous</button>
                     <span id="itemPageInfo" class="jt-page-info jt-muted"></span>
                     <button is="emby-button" type="button" class="raised" id="nextItems">Next</button>
@@ -549,6 +570,17 @@
                 return cell;
             }
 
+            function appendClampedCell(row, value, className) {
+                var text = value == null ? '' : String(value);
+                var cell = appendCell(row, '', className);
+                var content = document.createElement('div');
+                content.className = 'jt-cell-clamp';
+                content.textContent = text;
+                content.title = text.replace(/\n/g, ' — ');
+                cell.appendChild(content);
+                return cell;
+            }
+
             function renderSummary(summary) {
                 byId('enabledLibraries').textContent = summary.enabledLibraryCount;
                 byId('eligibleItems').textContent = summary.eligibleItems;
@@ -783,7 +815,7 @@
                 body.textContent = '';
                 result.items.forEach(function (item) {
                     var row = document.createElement('tr');
-                    appendCell(row, item.name + (item.year ? ' (' + item.year + ')' : ''));
+                    appendClampedCell(row, item.name + (item.year ? ' (' + item.year + ')' : ''));
                     var context = item.parentTitle || '';
                     var contextDetails = [];
                     if (item.seasonName) { contextDetails.push(item.seasonName); }
@@ -791,8 +823,8 @@
                     if (contextDetails.length) {
                         context += (context ? '\n' : '') + contextDetails.join(' | ');
                     }
-                    appendCell(row, context || '-', 'jt-context');
-                    appendCell(row, item.libraryName);
+                    appendClampedCell(row, context || '-', 'jt-context');
+                    appendClampedCell(row, item.libraryName);
                     var statusCell = appendCell(row, '');
                     var itemKey = String(item.id).toLowerCase();
                     var activeJobStatus = activeJobStates[itemKey];
