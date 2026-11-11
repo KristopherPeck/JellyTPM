@@ -9,6 +9,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.8.0.0",
+        "changelog": "Beta 7 includes UI adjustments to the Items view.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/KristopherPeck/JellyTPM/releases/download/0.8.0.0/JellyTPM_0.8.0.0.zip",
+        "checksum": "CBFECFEB1F26162222F0594BC150D3AD",
+        "timestamp": "2026-11-11T03:39:12Z"
+      },
+      {
         "version": "0.7.0.0",
         "changelog": "Beta 7 unifies inventory refreshes under Jellyfin Scheduled Tasks, persists snapshots across restarts, and adds weighted refresh progress.",
         "targetAbi": "12.4.0.0",
