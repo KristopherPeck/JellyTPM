@@ -157,6 +157,12 @@ After the exact release ZIP has been validated, update its matching manifest che
 .\scripts\package-release.ps1 -UpdateManifest
 ```
 
+For a new version that is not yet in `manifest.json`, provide its catalog release notes. The script creates the entry and writes the checksum and timestamp from that same build:
+
+```powershell
+.\scripts\package-release.ps1 -UpdateManifest -ReleaseNotes 'Beta 8 stabilizes the Items table layout across pages.'
+```
+
 `-SkipBuild` can repackage an existing `artifacts/publish/<version>` directory, but it cannot be combined with `-UpdateManifest`.
 
 ## Security

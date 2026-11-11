@@ -12,7 +12,10 @@ param(
     [switch]$SkipBuild,
 
     [Parameter()]
-    [switch]$UpdateManifest
+    [switch]$UpdateManifest,
+
+    [Parameter()]
+    [string]$ReleaseNotes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -207,12 +210,58 @@ $manifestMatches = @(
 if ($manifestMatches.Count -eq 0) {
     $message = "manifest.json has no entry for version $Version."
     if ($UpdateManifest) {
-        throw "$message Add the release entry before packaging with -UpdateManifest."
-    }
+        if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+            throw "$message Supply -ReleaseNotes to create it during packaging."
+        }
 
-    Write-Warning $message
+        $pluginMatches = @($manifestEntries | Where-Object { [string]$_.name -eq 'JellyTPM' })
+        if ($pluginMatches.Count -ne 1) {
+            throw "manifest.json contains $($pluginMatches.Count) JellyTPM plugin entries; expected exactly one."
+        }
+
+        $existingVersions = @($pluginMatches[0].versions)
+        $controllerReferences = @(
+            $project.Project.ItemGroup.PackageReference |
+                Where-Object { [string]$_.Include -eq 'Jellyfin.Controller' }
+        )
+        if ($controllerReferences.Count -ne 1) {
+            throw "The project contains $($controllerReferences.Count) Jellyfin.Controller references; expected exactly one."
+        }
+
+        try {
+            $controllerVersion = [Version][string]$controllerReferences[0].Version
+            $targetAbi = [Version]::new(
+                $controllerVersion.Major,
+                $controllerVersion.Minor,
+                [Math]::Max(0, $controllerVersion.Build),
+                [Math]::Max(0, $controllerVersion.Revision)).ToString()
+        }
+        catch {
+            throw "The Jellyfin.Controller version '$($controllerReferences[0].Version)' cannot be converted to a four-part target ABI."
+        }
+
+        $newVersion = [pscustomobject][ordered]@{
+            version = $Version
+            changelog = $ReleaseNotes.Trim()
+            targetAbi = $targetAbi
+            sourceUrl = "https://github.com/KristopherPeck/JellyTPM/releases/download/$Version/$archiveName"
+            checksum = ''
+            timestamp = ''
+        }
+        $pluginMatches[0].versions = @($newVersion) + $existingVersions
+        $manifestMatches = @(
+            [pscustomobject]@{
+                Plugin = $pluginMatches[0]
+                Version = $newVersion
+            }
+        )
+        Write-Host "Created manifest entry for $Version."
+    }
+    else {
+        Write-Warning $message
+    }
 }
-elseif ($manifestMatches.Count -gt 1) {
+if ($manifestMatches.Count -gt 1) {
     $message = "manifest.json contains $($manifestMatches.Count) entries for version $Version."
     if ($UpdateManifest) {
         throw "$message Refusing to update an ambiguous release."
@@ -220,7 +269,7 @@ elseif ($manifestMatches.Count -gt 1) {
 
     Write-Warning $message
 }
-elseif ($UpdateManifest) {
+elseif ($manifestMatches.Count -eq 1 -and $UpdateManifest) {
     $manifestVersion = $manifestMatches[0].Version
     $expectedArchiveSuffix = "/$archiveName"
     $manifestSourceUrl = [string]$manifestVersion.sourceUrl
@@ -265,10 +314,10 @@ elseif ($UpdateManifest) {
     Write-Host "Manifest checksum: $($hash.Hash)"
     Write-Host "Manifest timestamp: $releaseTimestamp"
 }
-elseif ([string]$manifestMatches[0].Version.checksum -eq $hash.Hash) {
+elseif ($manifestMatches.Count -eq 1 -and [string]$manifestMatches[0].Version.checksum -eq $hash.Hash) {
     Write-Host 'The generated archive checksum matches manifest.json.'
 }
-else {
+elseif ($manifestMatches.Count -eq 1) {
     Write-Warning "manifest.json checksum '$($manifestMatches[0].Version.checksum)' does not match the generated archive. When producing the final candidate, rerun with -UpdateManifest and test that generated ZIP before publishing it."
 }
 
