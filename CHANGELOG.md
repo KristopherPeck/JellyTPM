@@ -4,6 +4,8 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0.0] - 2026-11-10
+
 ### Changed
 
 - Stabilized Items table column widths, row heights, truncated text, and pager controls so navigation no longer shifts between pages.

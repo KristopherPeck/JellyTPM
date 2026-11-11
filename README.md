@@ -118,7 +118,7 @@ The plugin repository method is preferred because Jellyfin creates and manages t
 1. Download `JellyTPM_<version>.zip` from the matching [GitHub release](https://github.com/KristopherPeck/JellyTPM/releases).
 2. Stop Jellyfin before changing plugin files.
 3. At the top level of Jellyfin's plugin directory, move aside or remove old binary directories named `JellyTPM` or `JellyTPM_<old-version>`. Do not remove the `configurations` directory or JellyTPM data files.
-4. Create a versioned directory named `JellyTPM_<version>` using the exact four-part release version, such as `JellyTPM_0.7.0.0`.
+4. Create a versioned directory named `JellyTPM_<version>` using the exact four-part release version, such as `JellyTPM_0.8.0.0`.
 5. Extract the release archive directly into that versioned directory.
 6. Start Jellyfin and confirm the installed version on the Plugins page.
 
