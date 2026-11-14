@@ -4,6 +4,10 @@ All notable changes to JellyTPM will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Widened the Items status column so longer labels remain clearly separated from Expected values.
+
 ## [0.8.0.0] - 2026-11-10
 
 ### Changed
