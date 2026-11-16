@@ -9,7 +9,7 @@
 
 ![JellyTPM trickplay coverage and generation dashboard](assets/title-cards/jellytpm-repository.png)
 
-JellyTPM gives Jellyfin administrators a searchable view of native trickplay coverage and a controlled queue for generating, previewing, and replacing trickplay thumbnails.
+JellyTPM allows Jellyfin Administrators to be able to track and see trickplay coverage across all enabled libraries and queue up specific entries outside of normal scheduled trickplay generation. It also allows for previewing and regenerating trickplay for specific entries.
 
 > [!WARNING]
 > JellyTPM is currently beta software.
