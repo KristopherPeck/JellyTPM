@@ -1,6 +1,6 @@
 # JellyTPM
 
-> Jellyfin TrickPlay Manager
+> Trickplay auditing and management dashboard
 
 [![Jellyfin 12.4](https://img.shields.io/badge/Jellyfin-12.4-00A4DC?logo=jellyfin&logoColor=white)](https://jellyfin.org/)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
