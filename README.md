@@ -43,6 +43,18 @@ Server-wide totals and per-library completion show where trickplay generation is
 
 ![JellyTPM Coverage dashboard showing server totals and per-library trickplay completion](assets/screenshots/coverage-dashboard.png)
 
+### Item View
+
+Check specific item status and queue up individual or in bulk
+
+![JellyTPM Item View showing a filtered view](assets/screenshots/item-view.png)
+
+### Preview Mode
+
+Preview the generated trickplay and force it to regenerate if needed
+
+![JellyTPM Preview Mode showing the beginning frame of a trickplay file](assets/screenshots/preview-view.png)
+
 ### Generation queue
 
 Queue status and retained history keep generation activity visible without leaving the Jellyfin dashboard.
@@ -70,6 +82,8 @@ Generate missing uses Jellyfin's non-replacement operation. JellyTPM runs one jo
 Regenerate is available from the Preview dialog when an item already has trickplay data. It invokes Jellyfin's replacement operation, which can remove existing trickplay files and database records before rebuilding them. JellyTPM therefore requires explicit confirmation and prevents simultaneous jobs for the same item. If replacement fails, the item can temporarily have no usable trickplay preview.
 
 Jellyfin does not expose reliable numeric per-file trickplay progress to plugins, so JellyTPM reports lifecycle states: Queued, Generating, Completed, Failed, or Cancelled.
+
+## Scheduled Task
 
 Inventory refreshes run through Jellyfin's Scheduled Tasks system. Administrators can leave the dashboard while a scan is running and return later; the previous completed snapshot remains available until the replacement finishes successfully. The last successful snapshot is also restored as stale data after a server restart, so the dashboard does not need to remain empty while the startup task reconciles it. Opening the JellyTPM dashboard does not start a scan.
 
